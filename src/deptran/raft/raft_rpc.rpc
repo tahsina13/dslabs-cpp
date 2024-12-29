@@ -1,13 +1,30 @@
 namespace janus;
 
+struct MarshallDeputyLogEntry {
+  MarshallDeputy cmd; 
+  uint64_t term; 
+}; 
+
 abstract service Raft {
-  defer RequestVote(uint64_t arg1,
-                    uint64_t arg2 |
-                    uint64_t ret1,
+  defer RequestVote(uint64_t term,
+                    locid_t candidate_id,
+                    uint64_t last_log_index,
+                    uint64_t last_log_term |
+                    uint64_t ret_term,
                     bool_t vote_granted);
 
-  defer AppendEntries(MarshallDeputy cmd |
+  defer AppendEntries(uint64_t term,
+                      locid_t leader_id,
+                      uint64_t prev_log_index,
+                      uint64_t prev_log_term,
+                      vector<MarshallDeputyLogEntry> entries,
+                      uint64_t leader_commit |
                       bool_t followerAppendOK);
+                      
+  defer EmptyAppendEntries(uint64_t term,
+                           locid_t leader_id,
+                           uint64_t leader_commit);
+
   defer HelloRpc(string req | string res);                       
 
 }

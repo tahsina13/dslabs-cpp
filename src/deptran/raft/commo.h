@@ -3,6 +3,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../communicator.h"
+#include "raft_rpc.h"
 
 namespace janus {
 
@@ -14,16 +15,33 @@ class RaftCommo : public Communicator {
   RaftCommo() = delete;
   RaftCommo(PollMgr*);
 
-  void SendRequestVote(parid_t par_id,
-                       siteid_t site_id,
-                       uint64_t arg1,
-                       uint64_t arg2);
+  std::shared_ptr<SharedIntEvent>
+  SendRequestVote(parid_t par_id,
+                  siteid_t site_id,
+                  uint64_t term,
+                  locid_t candidate_id,
+                  uint64_t last_loast_index,
+                  uint64_t last_log_term,
+                  uint64_t *ret_term);
 
-  void SendAppendEntries(parid_t par_id,
+  std::shared_ptr<BoxEvent<bool_t>>
+  SendAppendEntries(parid_t par_id,
+                    siteid_t site_id,
+                    uint64_t term,
+                    locid_t leader_id,
+                    uint64_t prev_log_index,
+                    uint64_t prev_log_term,
+                    const std::vector<MarshallDeputyLogEntry>& entries,
+                    uint64_t leader_commit);
+
+  void
+  SendEmptyAppendEntries(parid_t par_id,
                          siteid_t site_id,
-                         shared_ptr<Marshallable> cmd);
+                         uint64_t term,
+                         locid_t leader_id,
+                         uint64_t leader_commit);
 
-  shared_ptr<IntEvent> 
+  std::shared_ptr<IntEvent> 
   SendString(parid_t par_id, siteid_t site_id, const string& msg, string* res);
 
   /* Do not modify this class below here */

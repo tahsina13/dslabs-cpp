@@ -24,6 +24,7 @@
 
 #define _ARGPAIRS0(...)
 #define _ARGPAIRS1(first, second, ...) first second _ARGPAIRS0(__VA_ARGS__)
+#define _ARGPAIRS2(first, second, ...) first second, _ARGPAIRS1(__VA_ARGS__)
 #define _ARGPAIRS3(first, second, ...) first second, _ARGPAIRS2(__VA_ARGS__)
 #define _ARGPAIRS2(first, second, ...) first second, _ARGPAIRS1(__VA_ARGS__)
 #define _ARGPAIRS4(first, second, ...) first second, _ARGPAIRS3(__VA_ARGS__)
