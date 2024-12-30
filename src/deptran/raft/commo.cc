@@ -33,7 +33,7 @@ RaftCommo::SendRequestVote(parid_t par_id,
     *ret_term = 0; 
   }
   for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
+    if (p.first == site_id || (p.first != candidate_id && site_id == static_cast<siteid_t>(-1))) {
       RaftProxy *proxy = (RaftProxy*) p.second;
       FutureAttr fuattr;
       fuattr.callback = [votes, ev, ret_term](Future* fu) {
@@ -67,7 +67,7 @@ RaftCommo::SendAppendEntries(parid_t par_id,
                              locid_t leader_id,
                              uint64_t prev_log_index,
                              uint64_t prev_log_term,
-                             const std::vector<MarshallDeputyLogEntry>& entries,
+                             const std::vector<RaftDataWrapper>& entries_wrapper,
                              uint64_t leader_commit) {
   /*
    * More example code for sending a single RPC to server at site_id
@@ -85,7 +85,7 @@ RaftCommo::SendAppendEntries(parid_t par_id,
         ev->Set(followerAppendOK); 
       };
       /* wrap Marshallable in a MarshallDeputy to send over RPC */
-      Call_Async(proxy, AppendEntries, term, leader_id, prev_log_index, prev_log_term, entries, leader_commit, fuattr);
+      Call_Async(proxy, AppendEntries, term, leader_id, prev_log_index, prev_log_term, entries_wrapper, leader_commit, fuattr);
     }
   }
   return ev; 

@@ -13,7 +13,7 @@ namespace janus {
 RaftServer::RaftServer(Frame * frame) : state(State::CANDIDATE),
                                         current_term(0),
                                         voted_for(-1),
-                                        logs(1, { nullptr, 0 }),
+                                        log(1, { nullptr, 0 }),
                                         commit_index(0),
                                         last_applied(0),
                                         rng(std::random_device()()),
@@ -64,8 +64,8 @@ bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
     mtx_.unlock(); 
     return false; 
   }
-  logs.push_back(MarshallableLogEntry{cmd, current_term}); 
-  match_index[loc_id_] = logs.size() - 1;
+  log.push_back(RaftData{cmd, current_term}); 
+  match_index[loc_id_] = log.size() - 1;
   *index = match_index[loc_id_]; 
   *term = current_term;           
   return true; 
@@ -123,8 +123,8 @@ void RaftServer::SendAppendEntries() {
   }
 
   // find latest index that is replicated on majority of servers
-  int next_commit_index = logs.size() - 1; 
-  while (next_commit_index > commit_index && logs[next_commit_index].term == current_term) {
+  int next_commit_index = log.size() - 1; 
+  while (next_commit_index > commit_index && log[next_commit_index].term == current_term) {
     int count = std::count_if(match_index.begin(), match_index.end(), 
                               [this, next_commit_index](uint64_t idx) { return idx >= next_commit_index; });
     if (count >= target_majority) {
@@ -132,15 +132,15 @@ void RaftServer::SendAppendEntries() {
     }
     next_commit_index--; 
   }
-  if (logs[next_commit_index].term != current_term) {
+  if (log[next_commit_index].term != current_term) {
     // do not commit entries from previous terms
     next_commit_index = commit_index; 
   }
   
   // commit entries on leader node
   while (commit_index < next_commit_index) {
-    app_next_(*logs[++commit_index].cmd);
-    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(logs[commit_index].cmd);
+    app_next_(*log[++commit_index].cmd);
+    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(log[commit_index].cmd);
     Log_debug("Leader %d committed cmd %d at index %d in term %d", 
               loc_id_, cmdptr->tx_id_, commit_index, current_term);
   }
@@ -150,21 +150,21 @@ void RaftServer::SendAppendEntries() {
     if (p.first == loc_id_) {
       continue; 
     }
-    if (next_index[p.first] < logs.size()) {
-      std::vector<MarshallDeputyLogEntry> entries;
-      std::transform(logs.begin() + next_index[p.first], logs.end(), std::back_inserter(entries), 
-        [](const MarshallableLogEntry& entry) {
+    if (next_index[p.first] < log.size()) {
+      std::vector<RaftDataWrapper> entries_wrapper;
+      std::transform(log.begin() + next_index[p.first], log.end(), std::back_inserter(entries_wrapper), 
+        [](const RaftData& entry) {
           MarshallDeputy md(entry.cmd); 
-          return MarshallDeputyLogEntry{md, entry.term};
+          return RaftDataWrapper{md, entry.term};
         });
       append_events[p.first] = commo()->SendAppendEntries(partition_id_, /* partition id is always 0 for lab1 */
                                                           p.first, current_term, loc_id_, 
-                                                          next_index[p.first] - 1, logs[next_index[p.first] - 1].term, 
-                                                          entries, commit_index);
-      auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(logs[next_index[p.first]].cmd);
+                                                          next_index[p.first] - 1, log[next_index[p.first] - 1].term, 
+                                                          entries_wrapper, commit_index);
+      auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(log[next_index[p.first]].cmd);
       Log_debug("Leader %d sending %d append entries for cmd %d at index %d to %d in term %d", 
-                loc_id_, entries.size(), cmdptr->tx_id_, next_index[p.first], p.first, current_term);
-      next_index[p.first] = logs.size(); 
+                loc_id_, entries_wrapper.size(), cmdptr->tx_id_, next_index[p.first], p.first, current_term);
+      next_index[p.first] = log.size(); 
     } else {
       commo()->SendEmptyAppendEntries(partition_id_, /* partition id is always 0 for lab1 */
                                       p.first, current_term, loc_id_, commit_index);
@@ -173,17 +173,19 @@ void RaftServer::SendAppendEntries() {
 }
 
 void RaftServer::StartElection() {
+  uint64_t ret_term; 
+
   mtx_.lock(); 
   UpdateTerm(current_term + 1);
-  uint64_t ret_term; 
+  voted_for = loc_id_; // vote for self 
   auto ev = commo()->SendRequestVote(partition_id_, /* partition id is always 0 for lab1 */
-                                    -1, current_term, loc_id_, logs.size() - 1, logs.back().term, &ret_term);
+                                    -1, current_term, loc_id_, log.size() - 1, log.back().term, &ret_term);
   mtx_.unlock(); 
 
-  if (!ev->WaitUntilGreaterOrEqualThan(target_majority, election_timeout)) {
+  if (!ev->WaitUntilGreaterOrEqualThan(target_majority - 1, election_timeout)) {
     mtx_.lock(); 
     state = State::LEADER;
-    next_index.assign(num_proxies, logs.size());
+    next_index.assign(num_proxies, log.size());
     match_index.assign(num_proxies, 0);
     append_events.assign(num_proxies, nullptr);
     Log_debug("Server %d became leader for term %d", loc_id_, current_term);
@@ -214,18 +216,19 @@ void RaftServer::WaitForHeartbeat(uint64_t timeout) {
   mtx_.unlock(); 
 }
 
-void RaftServer::HandleRequestVote(const uint64_t &term,
-                                   const locid_t &candidate_id,
-                                   const uint64_t &last_log_index,
-                                   const uint64_t &last_log_term,
-                                   uint64_t *ret_term,
-                                   bool_t *vote_granted) {
+void RaftServer::OnRequestVote(const uint64_t &term,
+                               const locid_t &candidate_id,
+                               const uint64_t &last_log_index,
+                               const uint64_t &last_log_term,
+                               uint64_t *ret_term,
+                               bool_t *vote_granted,
+                               const function<void()> &cb) {
   /* Your code here */
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
 
   bool_t has_voted = voted_for != static_cast<locid_t>(-1); 
-  bool_t up_to_date = last_log_term > logs.back().term || 
-    (last_log_term == logs.back().term && last_log_index >= logs.size() - 1);
+  bool_t up_to_date = last_log_term > log.back().term || 
+    (last_log_term == log.back().term && last_log_index >= log.size() - 1);
 
   *ret_term = current_term; 
   *vote_granted = false; // assume vote not granted by default
@@ -244,23 +247,25 @@ void RaftServer::HandleRequestVote(const uint64_t &term,
     voted_for = candidate_id;   
     *vote_granted = true; 
   }
+  cb(); 
 }
 
-void RaftServer::HandleAppendEntries(const uint64_t &term,
-                                     const locid_t &leader_id,
-                                     const uint64_t &prev_log_index,
-                                     const uint64_t &prev_log_term,
-                                     const std::vector<MarshallableLogEntry> &entries,
-                                     const uint64_t &leader_commit,
-                                     bool_t *followerAppendOK) {
+void RaftServer::OnAppendEntries(const uint64_t &term,
+                                 const locid_t &leader_id,
+                                 const uint64_t &prev_log_index,
+                                 const uint64_t &prev_log_term,
+                                 const std::vector<RaftData> &entries,
+                                 const uint64_t &leader_commit,
+                                 bool_t *followerAppendOK,
+                                 const function<void()> &cb) {
   /* Your code here */
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  bool_t log_matches = prev_log_index < logs.size() && logs[prev_log_index].term == prev_log_term; 
+  bool_t log_matches = prev_log_index < log.size() && log[prev_log_index].term == prev_log_term; 
   if (term >= current_term && log_matches) {
-    while (logs.size() > prev_log_index + 1) {
-      logs.pop_back();
+    while (log.size() > prev_log_index + 1) {
+      log.pop_back();
     }
-    logs.insert(logs.end(), entries.begin(), entries.end());
+    log.insert(log.end(), entries.begin(), entries.end());
     *followerAppendOK = true;  
     Log_debug("Follower %d appended %d entries from %d in term %d", 
               loc_id_, entries.size(), leader_id, current_term);
@@ -269,12 +274,13 @@ void RaftServer::HandleAppendEntries(const uint64_t &term,
     Log_debug("Follower %d rejected %d entries from %d in term %d", 
               loc_id_, entries.size(), leader_id, current_term);
   }
-  HandleEmptyAppendEntries(term, leader_id, leader_commit); 
+  OnEmptyAppendEntries(term, leader_id, leader_commit, cb); 
 }
 
-void RaftServer::HandleEmptyAppendEntries(const uint64_t &term,
-                                          const locid_t &leader_id,
-                                          const uint64_t &leader_commit) {
+void RaftServer::OnEmptyAppendEntries(const uint64_t &term,
+                                      const locid_t &leader_id,
+                                      const uint64_t &leader_commit,
+                                      const function<void()> &cb) {
   /* Your code here */
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   if (term < current_term) {
@@ -282,16 +288,17 @@ void RaftServer::HandleEmptyAppendEntries(const uint64_t &term,
   }
   state = State::FOLLOWER; 
   UpdateTerm(term); 
-  while (commit_index < leader_commit && commit_index < logs.size() - 1) {
+  while (commit_index < leader_commit && commit_index < log.size() - 1) {
     commit_index++; 
-    app_next_(*logs[commit_index].cmd);
-    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(logs[commit_index].cmd);
+    app_next_(*log[commit_index].cmd);
+    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(log[commit_index].cmd);
     Log_debug("Follower %d committed cmd %d at index %d in term %d", 
               loc_id_, cmdptr->tx_id_, commit_index, current_term);
   }
   if (heartbeat_event != nullptr && !heartbeat_event->IsTimeout() && !heartbeat_event->IsReady()) {
     heartbeat_event->Set(1); 
   }
+  cb(); 
 }
 
 /* Do not modify any code below here */

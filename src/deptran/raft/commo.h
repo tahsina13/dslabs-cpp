@@ -31,7 +31,7 @@ class RaftCommo : public Communicator {
                     locid_t leader_id,
                     uint64_t prev_log_index,
                     uint64_t prev_log_term,
-                    const std::vector<MarshallDeputyLogEntry>& entries,
+                    const std::vector<RaftDataWrapper>& entries_wrapper,
                     uint64_t leader_commit);
 
   void

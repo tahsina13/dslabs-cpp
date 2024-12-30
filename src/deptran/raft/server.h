@@ -14,7 +14,7 @@ namespace janus {
 #define MIN_ELECTION_TIMEOUT 2500000 // 2500ms 
 #define MAX_ELECTION_TIMEOUT 5000000 // 5000ms 
 
-struct MarshallableLogEntry {
+struct RaftData {
   std::shared_ptr<Marshallable> cmd;
   uint64_t term;
 }; 
@@ -36,7 +36,7 @@ class RaftServer : public TxLogServer {
   // Persistent state on all servers
   uint64_t current_term;
   locid_t voted_for;
-  std::vector<MarshallableLogEntry> logs;
+  std::vector<RaftData> log;
 
   // Volitile state on all servers
   uint64_t commit_index;
@@ -59,24 +59,27 @@ class RaftServer : public TxLogServer {
   void StartElection(); 
   void WaitForHeartbeat(uint64_t timeout); 
 
-  void HandleRequestVote(const uint64_t &term,
-                         const locid_t &candidate_id,
-                         const uint64_t &last_log_index,
-                         const uint64_t &last_log_term,
-                         uint64_t *ret_term,
-                         bool_t *vote_granted);
+  void OnRequestVote(const uint64_t &term,
+                     const locid_t &candidate_id,
+                     const uint64_t &last_log_index,
+                     const uint64_t &last_log_term,
+                     uint64_t *ret_term,
+                     bool_t *vote_granted,
+                     const function<void()> &cb);
 
-  void HandleAppendEntries(const uint64_t &term,
-                           const locid_t &leader_id,
-                           const uint64_t &prev_log_index,
-                           const uint64_t &prev_log_term,
-                           const std::vector<MarshallableLogEntry> &entries,
-                           const uint64_t &leader_commit,
-                           bool_t *followerAppendOK);
+  void OnAppendEntries(const uint64_t &term,
+                       const locid_t &leader_id,
+                       const uint64_t &prev_log_index,
+                       const uint64_t &prev_log_term,
+                       const std::vector<RaftData> &entries,
+                       const uint64_t &leader_commit,
+                       bool_t *followerAppendOK,
+                       const function<void()> &cb);
 
-  void HandleEmptyAppendEntries(const uint64_t &term,
-                                const locid_t &leader_id,
-                                const uint64_t &leader_commit);
+  void OnEmptyAppendEntries(const uint64_t &term,
+                            const locid_t &leader_id,
+                            const uint64_t &leader_commit,
+                            const function<void()> &cb);
   
   /* do not modify this class below here */
 

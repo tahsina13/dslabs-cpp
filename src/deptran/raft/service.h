@@ -37,7 +37,7 @@ class RaftServiceImpl : public RaftService {
              const locid_t&, leader_id,
              const uint64_t&, prev_log_index,
              const uint64_t&, prev_log_term,
-             const vector<MarshallDeputyLogEntry>&, entries,
+             const vector<RaftDataWrapper>&, entries_wrapper,
              const uint64_t&, leader_commit,
              bool_t*, followerAppendOK) {
     *followerAppendOK = false;

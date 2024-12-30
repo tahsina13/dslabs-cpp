@@ -1,6 +1,6 @@
 namespace janus;
 
-struct MarshallDeputyLogEntry {
+struct RaftDataWrapper {
   MarshallDeputy cmd; 
   uint64_t term; 
 }; 
@@ -17,7 +17,7 @@ abstract service Raft {
                       locid_t leader_id,
                       uint64_t prev_log_index,
                       uint64_t prev_log_term,
-                      vector<MarshallDeputyLogEntry> entries,
+                      vector<RaftDataWrapper> entries,
                       uint64_t leader_commit |
                       bool_t followerAppendOK);
                       
