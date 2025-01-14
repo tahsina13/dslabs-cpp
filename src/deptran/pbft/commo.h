@@ -17,44 +17,46 @@ class PbftCommo : public Communicator {
 
   void
   SendPreprepare(parid_t par_id,
-                 siteid_t site_id, // -1 for broadcast
-                 const PreprepareRequest& req,
-                 const Message& cmd); 
+                 siteid_t site_id, 
+                 const PreprepareMessage& mesg,
+                 const shared_ptr<Marshallable>& cmd,
+                 uint64_t timestamp,
+                 cliid_t client_id); 
 
   void
   SendPrepare(parid_t par_id,
-              siteid_t site_id, // -1 for broadcast
-              const PrepareRequest& req);
+              siteid_t site_id,
+              const PrepareMessage& mesg);
 
   void
   SendCommit(parid_t par_id,
-             siteid_t site_id, // -1 for broadcast
-             const CommitRequest& req);
+             siteid_t site_id,
+             const CommitMessage& mesg);
 
   void
   SendPrepared(parid_t par_id,
-               siteid_t site_id, // -1 for broadcast
-               const PreparedRequest& req);
+               siteid_t site_id,
+               const PreparedMessage& mesg);
 
   void
   SendCommitted(parid_t par_id,
-                siteid_t site_id, // -1 for broadcast
-                const CommittedRequest& req);
+                siteid_t site_id,
+                const CommittedMessage& mesg);
 
   void 
   SendCheckpoint(parid_t par_id,
-                 siteid_t site_id, // -1 for broadcast
-                 const CheckpointRequest& req);
+                 siteid_t site_id,
+                 const CheckpointMessage& mesg);
 
   void
   SendViewChange(parid_t par_id,
-                 siteid_t site_id, // -1 for broadcast
-                 const ViewChangeRequest& req);
+                 siteid_t site_id,
+                 const ViewChangeMessage& mesg);
 
   void
   SendNewView(parid_t par_id,
-              siteid_t site_id, // -1 for broadcast
-              const NewViewRequest& req);
+              siteid_t site_id,
+              const NewViewMessage& mesg);
 
   /* Do not modify this class below here */
 

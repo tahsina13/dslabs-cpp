@@ -1,79 +1,79 @@
-struct Message {
-  MarshallDeputy cmd; 
-  uint64_t timestamp; 
-  cliid_t client_id; 
-}; 
-
-struct PreprepareRequest {
+struct PreprepareMessage {
   uint64_t view;
   slotid_t seqno;
   uint64_t digest; 
+  svrid_t server_id; 
 }; 
 
-struct PrepareRequest{
+struct PrepareMessage {
   uint64_t view; 
   slotid_t seqno; 
   uint64_t digest;  
+  svrid_t server_id; 
 };
 
-struct CommitRequest {
+struct CommitMessage {
   uint64_t view; 
   slotid_t seqno; 
   uint64_t digest; 
+  svrid_t server_id; 
 }; 
 
-struct PreparedRequest {
-  PreprepareRequest preprepare; 
-  vector<PrepareRequest> prepares; 
+struct PreparedMessage {
+  PreprepareMessage preprepare; 
+  vector<PrepareMessage> prepares; 
 }; 
 
-struct CommittedRequest {
-  PreprepareRequest preprepare; 
-  vector<PrepareRequest> prepares; 
-  vector<CommitRequest> commits; 
+struct CommittedMessage {
+  PreprepareMessage preprepare; 
+  vector<PrepareMessage> prepares; 
+  vector<CommitMessage> commits; 
 }
 
-struct CheckpointRequest {
+struct CheckpointMessage {
   slotid_t ckpt_seqno;   
   uint64_t digest; 
 }; 
 
-struct ViewChangeRequest {
+struct ViewChangeMessage {
   uint64_t new_view; 
   slotid_t ckpt_seqno; 
-  vector<CheckpointRequest> checkpoints; 
-  vector<PreprepareRequest> preprepares; 
-  vector<vector<PrepareRequest>> prepares; 
+  vector<CheckpointMessage> checkpoints; 
+  vector<PreprepareMessage> preprepares; 
+  vector<vector<PrepareMessage>> prepares; 
 }; 
 
-struct NewViewRequest {
+struct NewViewMessage {
   uint64_t new_view; 
-  vector<ViewChangeRequest> view_changes; 
-  vector<PreprepareRequest> preprepares; 
+  vector<ViewChangeMessage> view_changes; 
+  vector<PreprepareMessage> preprepares; 
 }; 
-
-abstract service PbftClient {
-  defer Request(MarshallDeputy cmd,
-                uint64_t timestamp,
-                cliid_t client_id); 
-
-  defer Reply(uint64_t current_view,
-              uint64_t timestamp,
-              cliid_t client_id,
-              svrid_t server_id,
-              string res); 
-}
 
 abstract service Pbft {
-  defer Preprepare(PreprepareRequest req, Message mesg); 
-  defer Prepare(PrepareRequest req); 
-  defer Commit(CommitRequest req); 
+  defer Preprepare(PreprepareMessage mesg, 
+                   MarshallDeputy md_cmd, 
+                   uint64_t timestamp, 
+                   cliid_t client_id); 
+  defer Prepare(PrepareMessage mesg); 
+  defer Commit(CommitMessage mesg); 
 
-  defer Prepared(PreparedRequest req); 
-  defer Committed(CommittedRequest req); 
+  defer Prepared(PreparedMessage mesg); 
+  defer Committed(CommittedMessage mesg); 
   
-  defer Checkpoint(CheckpointRequest req); 
+  defer Checkpoint(CheckpointMessage mesg); 
 
-  defer ViewChange(ViewChangeRequest req); 
-  defer NewView(NewViewRequest req); 
+  defer ViewChange(ViewChangeMessage mesg); 
+  defer NewView(NewViewMessage mesg); 
+}
+
+abstract service PbftClient {
+  defer SendRequest(MarshallDeputy md_cmd,
+                    uint64_t timestamp,
+                    cliid_t client_id); 
+
+  defer SendReply(uint64_t current_view,
+                  uint64_t timestamp,
+                  cliid_t client_id,
+                  svrid_t server_id,
+                  string res); 
 }

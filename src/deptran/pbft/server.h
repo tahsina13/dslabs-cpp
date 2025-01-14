@@ -6,8 +6,27 @@
 #include "../classic/tpc_command.h"
 #include "pbft_rpc.h"
 #include "commo.h"
+#include "logstore.h"
 
 namespace janus {
+
+#define CHECKPOINT_INTERVAL 100
+#define MAX_REQUESTS_IN_TRANSIT (2 * CHECKPOINT_INTERVAL)
+
+enum RequestState {
+  REQ_INIT,
+  REQ_PREPARED,
+  REQ_COMMITTED,
+  REQ_EXECUTED,
+}; 
+
+struct Request {
+  std::shared_ptr<Marshallable> cmd;
+  uint64_t timestamp; 
+  cliid_t client_id; 
+  RequestState state; 
+  // TODO: implement timers 
+}; 
 
 class PbftServer : public TxLogServer {
  public:
@@ -21,27 +40,26 @@ class PbftServer : public TxLogServer {
   slotid_t low_watermark_; 
   slotid_t high_watermark_; 
 
-  // TODO: need to store message state
-  std::map<slotid_t, PreprepareRequest> preprepares_; 
-  std::map<slotid_t, std::map<locid_t, PrepareRequest>> prepares_; 
-  std::map<slotid_t, std::map<locid_t, CommitRequest>> commits_; 
-  std::map<slotid_t, std::map<locid_t, CheckpointRequest>> checkpoints_; 
-  std::map<std::pair<uint64_t, cliid_t>, std::string> results_;
+  std::map<slotid_t, Request> requests_; 
+  std::map<std::pair<uint64_t, cliid_t>, std::string> replies_;
+  LogStore logstore_; 
   
   /* Your functions here */
-  void OnPreprepare(const PreprepareRequest &req, 
-                    const Message &mesg,
+  void OnPreprepare(const PreprepareMessage &mesg, 
+                    std::shared_ptr<Marshallable> cmd,
+                    uint64_t timestamp,
+                    cliid_t client_id,
                     const function<void()> &cb);
-  void OnPrepare(const PrepareRequest &req, const function<void()> &cb);
-  void OnCommit(const CommitRequest &req, const function<void()> &cb);
+  void OnPrepare(const PrepareMessage &mesg, const function<void()> &cb);
+  void OnCommit(const CommitMessage &mesg, const function<void()> &cb);
   
-  void OnPrepared(const PreparedRequest &req, const function<void()> &cb);
-  void OnCommitted(const CommittedRequest &req, const function<void()> &cb);
+  void OnPrepared(const PreparedMessage &mesg, const function<void()> &cb);
+  void OnCommitted(const CommittedMessage &mesg, const function<void()> &cb);
 
-  void OnCheckpoint(const CheckpointRequest &req, const function<void()> &cb);
+  void OnCheckpoint(const CheckpointMessage &mesg, const function<void()> &cb);
 
-  void OnNewView(const NewViewRequest &req, const function<void()> &cb);
-  void OnViewChange(const ViewChangeRequest &req, const function<void()> &cb);
+  void OnNewView(const NewViewMessage &mesg, const function<void()> &cb);
+  void OnViewChange(const ViewChangeMessage &mesg, const function<void()> &cb);
   
   /* do not modify this class below here */
 

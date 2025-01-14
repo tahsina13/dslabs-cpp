@@ -12,45 +12,48 @@ PbftServiceImpl::PbftServiceImpl(TxLogServer *sched)
 	srand(curr_time.tv_nsec);
 }
 
-void PbftServiceImpl::HandlePreprepare(const PreprepareRequest& req,
-                                       const Message& mesg,
+void PbftServiceImpl::HandlePreprepare(const PreprepareMessage& mesg,
+                                       const MarshallDeputy& md_cmd,
+                                       uint64_t timestamp,
+                                       cliid_t client_id,
                                        rrr::DeferredReply* defer) {
-  svr_->OnPreprepare(req, mesg, std::bind(&rrr::DeferredReply::reply, defer)); 
+  shared_ptr<Marshallable> cmd = const_cast<MarshallDeputy&>(md_cmd).sp_data_;
+  svr_->OnPreprepare(mesg, cmd, timestamp, client_id, std::bind(&rrr::DeferredReply::reply, defer)); 
 }
 
-void PbftServiceImpl::HandlePrepare(const PrepareRequest& req,
+void PbftServiceImpl::HandlePrepare(const PrepareMessage& mesg,
                                     rrr::DeferredReply* defer) {
-  svr_->OnPrepare(req, std::bind(&rrr::DeferredReply::reply, defer));
+  svr_->OnPrepare(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
-void PbftServiceImpl::HandleCommit(const CommitRequest& req,
+void PbftServiceImpl::HandleCommit(const CommitMessage& mesg,
                                    rrr::DeferredReply* defer) {
-  svr_->OnCommit(req, std::bind(&rrr::DeferredReply::reply, defer));
+  svr_->OnCommit(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
-void PbftServiceImpl::HandlePrepared(const PreparedRequest& req,
+void PbftServiceImpl::HandlePrepared(const PreparedMessage& mesg,
                                      rrr::DeferredReply* defer) {
-  svr_->OnPrepared(req, std::bind(&rrr::DeferredReply::reply, defer));
+  svr_->OnPrepared(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
-void PbftServiceImpl::HandleCommitted(const CommittedRequest& req,
+void PbftServiceImpl::HandleCommitted(const CommittedMessage& mesg,
                                       rrr::DeferredReply* defer) {
-  svr_->OnCommitted(req, std::bind(&rrr::DeferredReply::reply, defer));
+  svr_->OnCommitted(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
-void PbftServiceImpl::HandleCheckpoint(const CheckpointRequest& req,
+void PbftServiceImpl::HandleCheckpoint(const CheckpointMessage& mesg,
                                        rrr::DeferredReply* defer) {
-  svr_->OnCheckpoint(req, std::bind(&rrr::DeferredReply::reply, defer));
+  svr_->OnCheckpoint(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
-void PbftServiceImpl::HandleViewChange(const ViewChangeRequest& req,
+void PbftServiceImpl::HandleViewChange(const ViewChangeMessage& mesg,
                                        rrr::DeferredReply* defer) {
-  svr_->OnViewChange(req, std::bind(&rrr::DeferredReply::reply, defer));
+  svr_->OnViewChange(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
-void PbftServiceImpl::HandleNewView(const NewViewRequest& req,
+void PbftServiceImpl::HandleNewView(const NewViewMessage& mesg,
                                     rrr::DeferredReply* defer) {
-  svr_->OnNewView(req, std::bind(&rrr::DeferredReply::reply, defer));
+  svr_->OnNewView(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
 } // namespace janus;

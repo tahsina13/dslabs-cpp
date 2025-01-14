@@ -17,8 +17,10 @@ PbftCommo::PbftCommo(PollMgr* poll) : Communicator(poll) {
 void
 PbftCommo::SendPreprepare(parid_t par_id,
                           siteid_t site_id,
-                          const PreprepareRequest& req,
-                          const Message& cmd) {
+                          const PreprepareMessage& mesg,
+                          const shared_ptr<Marshallable>& cmd,
+                          uint64_t timestamp,
+                          cliid_t client_id) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -27,7 +29,8 @@ PbftCommo::SendPreprepare(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, Preprepare, req, cmd, fuattr);
+      MarshallDeputy md_cmd (cmd); 
+      Call_Async(proxy, Preprepare, mesg, md_cmd, timestamp, client_id, fuattr);
     }
   }
 }
@@ -35,7 +38,7 @@ PbftCommo::SendPreprepare(parid_t par_id,
 void
 PbftCommo::SendPrepare(parid_t par_id,
                        siteid_t site_id,
-                       const PrepareRequest& req) {
+                       const PrepareMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -44,7 +47,7 @@ PbftCommo::SendPrepare(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, Prepare, req, fuattr);
+      Call_Async(proxy, Prepare, mesg, fuattr);
     }
   }
 }
@@ -52,7 +55,7 @@ PbftCommo::SendPrepare(parid_t par_id,
 void 
 PbftCommo::SendCommit(parid_t par_id,
                       siteid_t site_id,
-                      const CommitRequest& req) {
+                      const CommitMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -61,7 +64,7 @@ PbftCommo::SendCommit(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, Commit, req, fuattr);
+      Call_Async(proxy, Commit, mesg, fuattr);
     }
   }
 }
@@ -69,7 +72,7 @@ PbftCommo::SendCommit(parid_t par_id,
 void
 PbftCommo::SendPrepared(parid_t par_id,
                         siteid_t site_id,
-                        const PreparedRequest& req) {
+                        const PreparedMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -78,7 +81,7 @@ PbftCommo::SendPrepared(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, Prepared, req, fuattr);
+      Call_Async(proxy, Prepared, mesg, fuattr);
     }
   }
 }
@@ -86,7 +89,7 @@ PbftCommo::SendPrepared(parid_t par_id,
 void
 PbftCommo::SendCommitted(parid_t par_id,
                          siteid_t site_id,
-                         const CommittedRequest& req) {
+                         const CommittedMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -95,7 +98,7 @@ PbftCommo::SendCommitted(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, Committed, req, fuattr);
+      Call_Async(proxy, Committed, mesg, fuattr);
     }
   }
 }
@@ -103,7 +106,7 @@ PbftCommo::SendCommitted(parid_t par_id,
 void
 PbftCommo::SendCheckpoint(parid_t par_id,
                           siteid_t site_id,
-                          const CheckpointRequest& req) {
+                          const CheckpointMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -112,7 +115,7 @@ PbftCommo::SendCheckpoint(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, Checkpoint, req, fuattr);
+      Call_Async(proxy, Checkpoint, mesg, fuattr);
     }
   }
 }
@@ -120,7 +123,7 @@ PbftCommo::SendCheckpoint(parid_t par_id,
 void
 PbftCommo::SendViewChange(parid_t par_id,
                           siteid_t site_id,
-                          const ViewChangeRequest& req) {
+                          const ViewChangeMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -129,7 +132,7 @@ PbftCommo::SendViewChange(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, ViewChange, req, fuattr);
+      Call_Async(proxy, ViewChange, mesg, fuattr);
     }
   }
 }
@@ -137,7 +140,7 @@ PbftCommo::SendViewChange(parid_t par_id,
 void
 PbftCommo::SendNewView(parid_t par_id,
                        siteid_t site_id,
-                       const NewViewRequest& req) {
+                       const NewViewMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
@@ -146,7 +149,7 @@ PbftCommo::SendNewView(parid_t par_id,
       fuattr.callback = [](Future* fu) {
         /* do nothing */
       };
-      Call_Async(proxy, NewView, req, fuattr);
+      Call_Async(proxy, NewView, mesg, fuattr);
     }
   }
 }
