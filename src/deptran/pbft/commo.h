@@ -3,7 +3,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../communicator.h"
-#include "raft_rpc.h"
+#include "pbft_rpc.h"
 
 namespace janus {
 
@@ -32,16 +32,6 @@ class PbftCommo : public Communicator {
   SendCommit(parid_t par_id,
              siteid_t site_id,
              const CommitMessage& mesg);
-
-  void
-  SendPrepared(parid_t par_id,
-               siteid_t site_id,
-               const PreparedMessage& mesg);
-
-  void
-  SendCommitted(parid_t par_id,
-                siteid_t site_id,
-                const CommittedMessage& mesg);
 
   void 
   SendCheckpoint(parid_t par_id,

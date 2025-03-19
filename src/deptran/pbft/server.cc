@@ -10,17 +10,25 @@
 
 namespace janus {
 
-PbftServer::PbftServer(Frame * frame) : current_view_(0), low_watermark_(0), high_watermark_(MAX_REQUESTS_IN_TRANSIT) {
+PbftServer::PbftServer(Frame * frame) : current_view_(0), 
+                                        current_primary_(0),
+                                        low_watermark_(0), 
+                                        high_watermark_(MAX_REQUESTS_IN_TRANSIT),
+                                        last_executed_(0),
+                                        in_view_change_(false),
+                                        md_(EVP_sha3_512()) {
   frame_ = frame ;
   /* Your code here for server initialization. Note that this function is 
      called in a different OS thread. Be careful about thread safety if 
      you want to initialize variables here. */
 
+  verify((mdctx_ = EVP_MD_CTX_new()) != NULL);
 }
 
 PbftServer::~PbftServer() {
   /* Your code here for server teardown */
 
+  EVP_MD_CTX_free(mdctx_); 
 }
 
 void PbftServer::Setup() {
@@ -33,10 +41,282 @@ void PbftServer::Setup() {
   target_majority_ = 2 * faults + 1; 
 }
 
+bool PbftServer::Start(shared_ptr<Marshallable>& cmd, 
+                       uint64_t timestamp, 
+                       cliid_t client_id, 
+                       uint64_t *index, 
+                       uint64_t *view) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  if (current_primary_ != loc_id_) {
+    return false; 
+  }
+
+  slotid_t seqno = low_watermark_ + 1; 
+  while (seqno <= high_watermark_ && logstore_.HasPreprepare(current_view_, seqno)) {
+    seqno++; 
+  }
+  if (seqno > high_watermark_) {
+    return false; 
+  }
+
+  uint64_t tx_id = 0; 
+  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
+    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(cmd); 
+    tx_id = cmdptr->tx_id_; 
+  }
+
+  PreprepareMessage preprepare = CreatePreprepare(current_view_, seqno); 
+  if (!logstore_.AddPreprepare(current_view_, seqno, preprepare)) {
+    return false; 
+  }
+  for (const auto& p : commo()->rpc_par_proxies_[partition_id_]) {
+    if (p.first != loc_id_) {
+      commo()->SendPreprepare(partition_id_, p.first, preprepare, cmd, timestamp, client_id); 
+    }
+  }
+
+  *index = seqno; 
+  *view = current_view_; 
+  return true;  
+}
+
 void PbftServer::GetState(bool *is_primary, uint64_t *view) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  *is_primary = (current_view_ % num_proxies_ == loc_id_); 
+  *is_primary = current_primary_ == loc_id_; 
   *view = current_view_; 
+}
+
+bool PbftServer::GetReply(uint64_t timestamp, cliid_t client_id, string *reply) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  auto it = replies_.find({timestamp, client_id}); 
+  if (it == replies_.end()) {
+    return false; 
+  }
+  *reply = it->second; 
+  return true; 
+}
+
+PreprepareMessage PbftServer::CreatePreprepare(uint64_t view, slotid_t seqno) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  unsigned char *raw_digest; 
+  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
+    Log_fatal("EVP_DigestInit_ex failed");
+  }
+  if (EVP_DigestUpdate(mdctx_, &loc_id_, sizeof(loc_id_)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &view, sizeof(view)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &seqno, sizeof(seqno)) != 1) {
+    Log_fatal("EVP_DigestUpdate failed");
+  }
+  if ((raw_digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
+    Log_fatal("OPENSSL_malloc failed");
+  }
+  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
+    Log_fatal("EVP_DigestFinal_ex failed");
+  }
+  std::string digest (reinterpret_cast<const char*>(raw_digest), EVP_MD_size(md_)); 
+  OPENSSL_free(raw_digest);
+  return {
+    .server_id = loc_id_,
+    .view = view,
+    .seqno = seqno,
+    .digest = digest,
+  }; 
+}
+
+PrepareMessage PbftServer::CreatePrepare(uint64_t view, slotid_t seqno) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  unsigned char *raw_digest; 
+  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
+    Log_fatal("EVP_DigestInit_ex failed");
+  }
+  if (EVP_DigestUpdate(mdctx_, &loc_id_, sizeof(loc_id_)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &view, sizeof(view)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &seqno, sizeof(seqno)) != 1) {
+    Log_fatal("EVP_DigestUpdate failed");
+  }
+  if ((raw_digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
+    Log_fatal("OPENSSL_malloc failed");
+  }
+  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
+    Log_fatal("EVP_DigestFinal_ex failed");
+  }
+  std::string digest (reinterpret_cast<const char*>(raw_digest), EVP_MD_size(md_));
+  OPENSSL_free(raw_digest);
+  return {
+    .server_id = loc_id_,
+    .view = view,
+    .seqno = seqno,
+    .digest = digest,
+  }; 
+}
+
+CommitMessage PbftServer::CreateCommit(uint64_t view, slotid_t seqno) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  unsigned char *raw_digest; 
+  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
+    Log_fatal("EVP_DigestInit_ex failed");
+  }
+  if (EVP_DigestUpdate(mdctx_, &loc_id_, sizeof(loc_id_)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &view, sizeof(view)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &seqno, sizeof(seqno)) != 1) {
+    Log_fatal("EVP_DigestUpdate failed");
+  }
+  if ((raw_digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
+    Log_fatal("OPENSSL_malloc failed");
+  }
+  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
+    Log_fatal("EVP_DigestFinal_ex failed");
+  }
+  std::string digest (reinterpret_cast<const char*>(raw_digest), EVP_MD_size(md_));
+  OPENSSL_free(raw_digest);
+  return {
+    .server_id = loc_id_,
+    .view = view,
+    .seqno = seqno,
+    .digest = digest,
+  }; 
+}
+
+CheckpointMessage PbftServer::CreateCheckpoint(slotid_t ckpt_seqno) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  unsigned char *raw_digest; 
+  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
+    Log_fatal("EVP_DigestInit_ex failed");
+  }
+  if (EVP_DigestUpdate(mdctx_, &loc_id_, sizeof(loc_id_)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &low_watermark_, sizeof(low_watermark_)) != 1) {
+    Log_fatal("EVP_DigestUpdate failed");
+  }
+  if ((raw_digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
+    Log_fatal("OPENSSL_malloc failed");
+  }
+  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
+    Log_fatal("EVP_DigestFinal_ex failed");
+  }
+  std::string digest (reinterpret_cast<const char*>(raw_digest), EVP_MD_size(md_));
+  OPENSSL_free(raw_digest);
+  return {
+    .server_id = loc_id_,
+    .ckpt_seqno = ckpt_seqno,
+    .digest = digest,
+  }; 
+}
+
+ViewChangeMessage PbftServer::CreateViewChange(uint64_t new_view) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  auto checkpoints = logstore_.GetCheckpoints(low_watermark_); 
+  std::map<slotid_t, PreprepareMessage> preprepares; 
+  std::map<slotid_t, std::map<locid_t, PrepareMessage>> prepares; 
+  for (const auto &[slot, req] : requests_) {
+    if (req.state >= RequestState::REQ_PREPARED) {
+      preprepares[slot] = logstore_.GetPreprepare(current_view_, slot);  
+      prepares[slot] = logstore_.GetPrepares(current_view_, slot); 
+    }
+  }  
+
+  unsigned char *raw_digest; 
+  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
+    Log_fatal("EVP_DigestInit_ex failed");
+  }
+  if (EVP_DigestUpdate(mdctx_, &loc_id_, sizeof(loc_id_)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &new_view, sizeof(new_view)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &low_watermark_, sizeof(low_watermark_)) != 1) {
+    Log_fatal("EVP_DigestUpdate failed");
+  }
+  for (auto &[_, ckpt] : checkpoints) {
+    if (EVP_DigestUpdate(mdctx_, ckpt.digest.data(), ckpt.digest.size()) != 1) {
+      Log_fatal("EVP_DigestUpdate failed");
+    }
+  }
+  for (auto &[_, preprepare] : preprepares) {
+    if (EVP_DigestUpdate(mdctx_, preprepare.digest.data(), preprepare.digest.size()) != 1) {
+      Log_fatal("EVP_DigestUpdate failed");
+    }
+  }
+  for (auto &[_, prepare_map] : prepares) {
+    for (auto &[_, prepare] : prepare_map) {
+      if (EVP_DigestUpdate(mdctx_, prepare.digest.data(), prepare.digest.size()) != 1) {
+        Log_fatal("EVP_DigestUpdate failed");
+      }
+    }
+  }
+  if ((raw_digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
+    Log_fatal("OPENSSL_malloc failed");
+  }
+  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
+    Log_fatal("EVP_DigestFinal_ex failed");
+  }
+  std::string digest (reinterpret_cast<const char*>(raw_digest), EVP_MD_size(md_));
+  OPENSSL_free(raw_digest);
+
+  return {
+    .server_id = loc_id_,
+    .new_view = new_view,
+    .ckpt_seqno = low_watermark_,
+    .checkpoints = checkpoints,
+    .preprepares = preprepares,
+    .prepares = prepares,
+    .digest = digest,
+  }; 
+}
+
+NewViewMessage PbftServer::CreateNewView(uint64_t new_view, const std::map<locid_t, ViewChangeMessage> &view_changes) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  slotid_t min_s = std::numeric_limits<slotid_t>::max(), max_s = 0;
+  std::map<slotid_t, PreprepareMessage> preprepares; 
+
+  for (const auto &[_, view_change] : view_changes) {
+    min_s = std::min(min_s, view_change.ckpt_seqno); 
+    for (const auto &[slot, preprepare] : view_change.preprepares) {
+      bool is_prepared = view_change.prepares.count(slot) >= 0 && 
+                         view_change.prepares.at(slot).size() >= target_majority_;
+      if (is_prepared) {
+        max_s = max(max_s, slot); 
+        if (!preprepares.count(slot)) {
+          preprepares[slot] = CreatePreprepare(new_view, slot);
+        } 
+      }
+    }
+  }
+  for (slotid_t slot = min_s + 1; slot <= max_s; slot++) {
+    if (!preprepares.count(slot)) {
+      preprepares[slot] = CreatePreprepare(new_view, slot);
+    }
+  }
+  
+  unsigned char *raw_digest; 
+  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
+    Log_fatal("EVP_DigestInit_ex failed");
+  }
+  if (EVP_DigestUpdate(mdctx_, &loc_id_, sizeof(loc_id_)) != 1 ||
+      EVP_DigestUpdate(mdctx_, &new_view, sizeof(new_view)) != 1) {
+    Log_fatal("EVP_DigestUpdate failed");
+  }
+  for (const auto &[_, view_change] : view_changes) {
+    if (EVP_DigestUpdate(mdctx_, view_change.digest.data(), view_change.digest.size()) != 1) {
+      Log_fatal("EVP_DigestUpdate failed");
+    }
+  }
+  for (const auto &[_, preprepare] : preprepares) {
+    if (EVP_DigestUpdate(mdctx_, preprepare.digest.data(), preprepare.digest.size()) != 1) {
+      Log_fatal("EVP_DigestUpdate failed");
+    }
+  }
+  if ((raw_digest = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
+    Log_fatal("OPENSSL_malloc failed");
+  }
+  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
+    Log_fatal("EVP_DigestFinal_ex failed");
+  }
+  std::string digest (reinterpret_cast<const char*>(raw_digest), EVP_MD_size(md_));
+  OPENSSL_free(raw_digest);
+
+  return {
+    .server_id = loc_id_,
+    .new_view = new_view,
+    .view_changes = view_changes,
+    .preprepares = preprepares,
+  }; 
 }
 
 void PbftServer::OnPreprepare(const PreprepareMessage &mesg, 
@@ -44,201 +324,152 @@ void PbftServer::OnPreprepare(const PreprepareMessage &mesg,
                               uint64_t timestamp,
                               cliid_t client_id,
                               const function<void()> &cb) {
-  /* Received by all servers */
-  txnid_t tx_id = 0; 
-  if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(cmd); 
-    tx_id = cmdptr->tx_id_; 
-  }
-
-  svrid_t primary_id = current_view_ % num_proxies_; 
-  bool from_primary = mesg.server_id == primary_id; 
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  bool is_same_view = mesg.view == current_view_; 
+  bool is_from_primary = mesg.server_id == current_primary_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
-  bool is_valid_digest = mesg.digest == tx_id; 
-  if (mesg.view != current_view_ || !from_primary || !is_seqno_valid || !is_valid_digest) {
+  bool is_digest_valid = true; // TODO: check signature of digest
+  if (in_view_change_ || !is_same_view || !is_from_primary || !is_seqno_valid || !is_digest_valid) {
     return; 
   }
 
-  if (!logstore_.AddPreprepare(mesg.seqno, mesg)) {
+  if (!logstore_.AddPreprepare(mesg.view, mesg.seqno, mesg)) {
     return; 
   }
   requests_[mesg.seqno] = {cmd, timestamp, client_id, REQ_INIT};
 
-  PrepareMessage prepare = {mesg.view, mesg.seqno, mesg.digest, loc_id_};
-  commo()->SendPrepare(partition_id_, primary_id, prepare); 
+  PrepareMessage prepare = CreatePrepare(mesg.view, mesg.seqno); 
+  for (const auto& p : commo()->rpc_par_proxies_[partition_id_]) {
+    commo()->SendPrepare(partition_id_, p.first, prepare); 
+  }
   cb(); 
 }
 
 void PbftServer::OnPrepare(const PrepareMessage &mesg, const function<void()> &cb) {
-  /* Received by primary server only */
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  bool is_same_view = mesg.view == current_view_; 
+  bool is_from_primary = mesg.server_id == current_primary_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
-  if (mesg.view != current_view_ || !is_seqno_valid || !logstore_.HasPreprepare(mesg.seqno)) {
+  bool is_digest_valid = true; // TODO: check signature of digest
+  if (in_view_change_ || !is_same_view || is_from_primary || !is_seqno_valid || !is_digest_valid || 
+    !logstore_.HasPreprepare(mesg.view, mesg.seqno) || !requests_.count(mesg.seqno)) {
     return; 
   }
 
-  Request &req = requests_[mesg.seqno]; 
-  const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.seqno);
-  txnid_t tx_id = 0; 
-  if (req.cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(req.cmd); 
-    tx_id = cmdptr->tx_id_; 
-  }
-  if (mesg.digest != tx_id || mesg.digest != preprepare.digest) {
-    return; 
-  }
+  Request &req = requests_[mesg.seqno]; // TODO: is request necessarily present for null requests? 
 
-  svrid_t primary_id = current_view_ % num_proxies_; 
-  if (mesg.server_id != primary_id) {
-    logstore_.AddPrepare(mesg.seqno, mesg.server_id, mesg); 
-    bool is_prepared = logstore_.GetPrepareCount(mesg.seqno) >= target_majority_ - 1;
-    if (req.state == RequestState::REQ_INIT && is_prepared) {
-      auto prepares = logstore_.GetPrepares(mesg.seqno); 
-      PreparedMessage prepared = {preprepare, prepares};  
-      commo()->SendPrepared(partition_id_, -1, prepared); 
+  logstore_.AddPrepare(mesg.view, mesg.seqno, mesg.server_id, mesg); 
+  bool is_prepared = logstore_.GetPrepares(mesg.view, mesg.seqno).size() >= target_majority_ - 1;
+  if (req.state == RequestState::REQ_INIT && is_prepared) {
+    req.state = RequestState::REQ_PREPARED; 
+    CommitMessage commit = CreateCommit(mesg.view, mesg.seqno); 
+    for (auto p : commo()->rpc_par_proxies_[partition_id_]) {
+      commo()->SendCommit(partition_id_, p.first, commit); 
     }
   }
   cb(); 
 }
 
 void PbftServer::OnCommit(const CommitMessage &mesg, const function<void()> &cb) {
-  /* Received by primary server only */
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
-  if (mesg.view != current_view_ || !is_seqno_valid || !logstore_.HasPreprepare(mesg.seqno)) {
+  bool is_digest_valid = true; // TODO: check signature of digest
+  if (in_view_change_ || !is_same_view || !is_seqno_valid || !is_digest_valid || 
+    !logstore_.HasPreprepare(mesg.view, mesg.seqno)) {
     return; 
   }
 
   Request &req = requests_[mesg.seqno]; 
-  const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.seqno);
-  txnid_t tx_id = 0; 
-  if (req.cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(req.cmd); 
-    tx_id = cmdptr->tx_id_; 
-  }
-  if (mesg.digest != tx_id || mesg.digest != preprepare.digest) {
-    return; 
-  }
 
-  logstore_.AddCommit(mesg.seqno, mesg.server_id, mesg); 
-  bool is_committed = logstore_.GetCommitCount(mesg.seqno) >= target_majority_;
+  logstore_.AddCommit(mesg.view, mesg.seqno, mesg.server_id, mesg); 
+  bool is_committed = logstore_.GetCommits(mesg.view, mesg.seqno).size() >= target_majority_;
   if (req.state == RequestState::REQ_PREPARED && is_committed) {
-    auto prepares = logstore_.GetPrepares(mesg.seqno); 
-    auto commits = logstore_.GetCommits(mesg.seqno); 
-    CommittedMessage committed = {preprepare, prepares, commits}; 
-    commo()->SendCommitted(partition_id_, -1, committed);
+    req.state = RequestState::REQ_COMMITTED; 
+    while (requests_.count(last_executed_ + 1)) {
+      req = requests_[last_executed_ + 1]; 
+      if (req.state == RequestState::REQ_COMMITTED) {
+        replies_[std::make_pair(req.timestamp, req.client_id)] = app_next_(*req.cmd);
+        req.state = RequestState::REQ_EXECUTED; 
+        last_executed_++; 
+        break;
+      } else if (req.state == RequestState::REQ_EXECUTED) {
+        last_executed_++; 
+      } else {
+        break; 
+      }
+    }
   }
   cb(); 
-}
-
-void PbftServer::OnPrepared(const PreparedMessage &mesg, const function<void()> &cb) {
-  /* Received by all servers */
-  svrid_t primary_id = current_view_ % num_proxies_; 
-  bool from_primary = mesg.preprepare.server_id == primary_id; 
-  bool is_seqno_valid = low_watermark_ < mesg.preprepare.seqno && mesg.preprepare.seqno <= high_watermark_;
-  if (!is_seqno_valid || !from_primary || !logstore_.HasPreprepare(mesg.preprepare.seqno)) {
-    return; 
-  }
-
-  Request &req = requests_[mesg.preprepare.seqno]; 
-  const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.preprepare.seqno);
-  txnid_t tx_id = 0; 
-  if (req.cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(req.cmd); 
-    tx_id = cmdptr->tx_id_; 
-  }
-  bool matches = mesg.preprepare.view == preprepare.view && 
-    mesg.preprepare.seqno == preprepare.seqno && 
-    mesg.preprepare.digest == preprepare.digest;
-  for (const auto& prepare : mesg.prepares) {
-    matches = matches && 
-      prepare.view == mesg.preprepare.view && 
-      prepare.seqno == mesg.preprepare.seqno && 
-      prepare.digest == mesg.preprepare.digest;
-  }
-  if (mesg.preprepare.digest != tx_id || mesg.preprepare.digest != preprepare.digest || !matches) {
-    return; 
-  }
-
-  for (const auto& prepare : mesg.prepares) {
-    if (prepare.server_id != primary_id) {
-      logstore_.AddPrepare(prepare.seqno, prepare.server_id, prepare);
-    }
-  }
-
-  bool is_prepared = logstore_.GetPrepareCount(mesg.preprepare.seqno) >= target_majority_ - 1;
-  if (req.state == RequestState::REQ_INIT && is_prepared) {
-    req.state = RequestState::REQ_PREPARED; 
-    CommitMessage commit = {mesg.preprepare.view, mesg.preprepare.seqno, mesg.preprepare.digest, loc_id_};
-    commo()->SendCommit(partition_id_, primary_id, commit); 
-  }
-  cb();
-}
-
-void PbftServer::OnCommitted(const CommittedMessage &mesg, const function<void()> &cb) {
-  /* Received by all servers */
-  svrid_t primary_id = current_view_ % num_proxies_; 
-  bool from_primary = mesg.preprepare.server_id == primary_id; 
-  bool is_seqno_valid = low_watermark_ < mesg.preprepare.seqno && mesg.preprepare.seqno <= high_watermark_;
-  if (!is_seqno_valid || !from_primary || !logstore_.HasPreprepare(mesg.preprepare.seqno)) {
-    return; 
-  }
-
-  Request &req = requests_[mesg.preprepare.seqno]; 
-  const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.preprepare.seqno);
-  txnid_t tx_id = 0; 
-  if (req.cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT) {
-    auto cmdptr = dynamic_pointer_cast<TpcCommitCommand>(req.cmd); 
-    tx_id = cmdptr->tx_id_; 
-  }
-  bool matches = mesg.preprepare.view == preprepare.view && 
-    mesg.preprepare.seqno == preprepare.seqno && 
-    mesg.preprepare.digest == preprepare.digest;
-  for (const auto& prepare : mesg.prepares) {
-    matches = matches && 
-      prepare.view == mesg.preprepare.view && 
-      prepare.seqno == mesg.preprepare.seqno && 
-      prepare.digest == mesg.preprepare.digest;
-  }
-  for (const auto& commit : mesg.commits) {
-    matches = matches && 
-      commit.view == mesg.preprepare.view && 
-      commit.seqno == mesg.preprepare.seqno && 
-      commit.digest == mesg.preprepare.digest;
-  }
-  if (mesg.preprepare.digest != tx_id || mesg.preprepare.digest != preprepare.digest || !matches) {
-    return; 
-  }
-
-  for (const auto& prepare : mesg.prepares) {
-    if (prepare.server_id != primary_id) {
-      logstore_.AddPrepare(prepare.seqno, prepare.server_id, prepare);
-    }
-  }
-  for (const auto& commit : mesg.commits) {
-    logstore_.AddCommit(commit.seqno, commit.server_id, commit); 
-  }
-  
-
-  bool has_majority = logstore_.GetCommitCount(mesg.preprepare.seqno) >= target_majority_;
-  if (req.state == RequestState::REQ_PREPARED && has_majority) {
-    app_next_(*req.cmd); 
-    req.state = RequestState::REQ_COMMITTED;
-    // TODO: send reply to client
-  }
-  cb();  
 }
 
 void PbftServer::OnCheckpoint(const CheckpointMessage &mesg, const function<void()> &cb) {
-  // TODO: implement
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  logstore_.AddCheckpoint(mesg.ckpt_seqno, mesg.server_id, mesg); 
+  bool has_majority = logstore_.GetCheckpoints(mesg.ckpt_seqno).size() >= target_majority_; 
+  if (has_majority && mesg.ckpt_seqno > low_watermark_) {
+    low_watermark_ = mesg.ckpt_seqno; 
+    high_watermark_ = low_watermark_ + MAX_REQUESTS_IN_TRANSIT;
+    logstore_.ClearLog(current_view_, low_watermark_); 
+    requests_.erase(requests_.begin(), requests_.upper_bound(low_watermark_)); 
+  }
   cb();  
 }
 
-void PbftServer::OnNewView(const NewViewMessage &mesg, const function<void()> &cb) {
-  // TODO: implement
+void PbftServer::OnViewChange(const ViewChangeMessage &mesg, const function<void()> &cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  in_view_change_ = true; 
+  if (!logstore_.AddViewChange(mesg.new_view, mesg.server_id, mesg)) {
+    return; 
+  }
+
+  bool has_majority = logstore_.GetViewChanges(mesg.new_view).size() >= target_majority_ - 1; 
+  if ((current_primary_ == loc_id_) && has_majority) {
+    if (!logstore_.HasViewChange(mesg.new_view, loc_id_)) {
+      logstore_.AddViewChange(mesg.new_view, loc_id_, CreateViewChange(mesg.new_view)); 
+    }
+    NewViewMessage new_view = CreateNewView(mesg.new_view, logstore_.GetViewChanges(mesg.new_view)); 
+    for (const auto &p : commo()->rpc_par_proxies_[partition_id_]) {
+      commo()->SendNewView(partition_id_, p.first, new_view); 
+    }
+  }
   cb(); 
 }
 
-void PbftServer::OnViewChange(const ViewChangeMessage &mesg, const function<void()> &cb) {
-  // TODO: implement
+void PbftServer::OnNewView(const NewViewMessage &mesg, const function<void()> &cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  auto new_view = CreateNewView(mesg.new_view, mesg.view_changes);
+  auto it = mesg.preprepares.begin(); 
+  auto it2 = new_view.preprepares.begin(); 
+  while (it != mesg.preprepares.end() && it2 != new_view.preprepares.end()) {
+    if (it->first != it2->first ||
+        it->second.view != it2->second.view ||
+        it->second.seqno != it2->second.seqno ||
+        it->second.digest != it2->second.digest ||
+        it->second.server_id != it2->second.server_id) {
+      return; 
+    }
+    it++; 
+    it2++; 
+  }
+  
+  current_view_ = mesg.new_view;
+  current_primary_ = (current_view_ % num_proxies_); 
+  logstore_.ClearLog(current_view_, low_watermark_); 
+  for (const auto &[slot, preprepare] : mesg.preprepares) {
+    if (logstore_.AddPreprepare(current_view_, slot, preprepare)) {
+      if (!requests_.count(slot)) {
+        auto cmptr = std::make_shared<TpcNoopCommand>(); 
+        auto cmd = std::dynamic_pointer_cast<Marshallable>(cmptr);
+        requests_[slot] = {cmd, 0, (cliid_t)num_proxies_, REQ_INIT};
+      }
+      PrepareMessage prepare = CreatePrepare(preprepare.view, preprepare.seqno);
+      for (const auto &p : commo()->rpc_par_proxies_[partition_id_]) {
+        commo()->SendPrepare(partition_id_, p.first, prepare); 
+      }
+    }
+  }
+  in_view_change_ = false; 
   cb(); 
 }
 
@@ -252,7 +483,7 @@ void PbftServer::Disconnect(const bool disconnect) {
   if (_proxies.find(partition_id_) == _proxies.end()) {
     _proxies[partition_id_] = {};
   }
-  RaftCommo *c = (RaftCommo*) commo();
+  PbftCommo *c = (PbftCommo*) commo();
   if (disconnect) {
     verify(_proxies[partition_id_][loc_id_].size() == 0);
     verify(c->rpc_par_proxies_.size() > 0);

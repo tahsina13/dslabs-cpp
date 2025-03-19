@@ -58,6 +58,8 @@ def options(opt):
                    default=False, action='store_true')
     opt.add_option('', '--enable-raft-test', dest='enable_raft_test',
                    default=False, action='store_true')
+    opt.add_option('', '--enable-pbft-test', dest='enable_pbft_test',
+                    default=False, action='store_true')
     opt.parse_args();
 
 def configure(conf):
@@ -69,7 +71,8 @@ def configure(conf):
 
     _enable_tcmalloc(conf)
     _enable_jemalloc(conf)
-    _enable_cxx14(conf)
+    # _enable_cxx14(conf)
+    _enable_cxx17(conf)
     _enable_debug(conf)
     _enable_profile(conf)
     _enable_event_timeout(conf)
@@ -85,6 +88,7 @@ def configure(conf):
     _enable_db_checksum(conf)
     _enable_leaksan(conf)
     _enable_raft_test(conf)
+    _enable_pbft_test(conf)
 
     conf.env.append_value("CXXFLAGS", "-Wno-reorder")
     conf.env.append_value("CXXFLAGS", "-Wno-comment")
@@ -104,6 +108,9 @@ def configure(conf):
 #    conf.env.append_value('LIBPATH', [os.path.expanduser('~') + '/.linuxbrew/lib'])
     conf.env.LIB_PTHREAD = 'pthread'
     conf.check_cfg(package='yaml-cpp', uselib_store='YAML-CPP', args=pargs)
+
+    conf.check_cfg(package='openssl', uselib_store='OPENSSL', args=pargs)
+    conf.env.append_value('LIB', ['ssl', 'crypto'])
 
     if sys.platform != 'darwin':
         conf.env.LIB_RT = 'rt'
@@ -179,7 +186,7 @@ def build(bld):
                         'src/deptran/paxos_main_helper.cc']),
               target="deptran_objects",
               includes="src src/rrr src/deptran ",
-              uselib="YAML-CPP BOOST",
+              uselib="YAML-CPP BOOST OPENSSL",
               use="externc rrr memdb PTHREAD PROFILER RT")
 
 #    bld.shlib(source=bld.path.ant_glob("src/deptran/paxos_main_helper.cc "),
@@ -191,7 +198,7 @@ def build(bld):
     bld.program(source=bld.path.ant_glob("src/deptran/s_main.cc"),
               target="deptran_server",
               includes="src src/rrr src/deptran ",
-              uselib="YAML-CPP BOOST",
+              uselib="YAML-CPP BOOST OPENSSL",
               use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
 
     bld.program(source=bld.path.ant_glob("src/run.cc "
@@ -301,6 +308,13 @@ def _enable_cxx14(conf):
         conf.env.append_value("LINKFLAGS", "-stdlib=libc++")
     conf.env.append_value("CXXFLAGS", "-std=c++14")
 
+def _enable_cxx17(conf): 
+    Logs.pprint("PINK", "C++17 features enabled")
+    if sys.platform == "darwin":
+        conf.env.append_value("CXXFLAGS", "-stdlib=libc++")
+        conf.env.append_value("LINKFLAGS", "-stdlib=libc++")
+    conf.env.append_value("CXXFLAGS", "-std=c++17") 
+
 def _enable_profile(conf):
     if Options.options.prof:
         Logs.pprint("PINK", "CPU profiling enabled")
@@ -334,6 +348,11 @@ def _enable_raft_test(conf):
     if Options.options.enable_raft_test:
         Logs.pprint("PINK", "Raft lab testing coroutine enabled")
         conf.env.append_value("CXXFLAGS", "-DRAFT_TEST_CORO")
+
+def _enable_pbft_test(conf):
+    if Options.options.enable_pbft_test:
+        Logs.pprint("PINK", "Pbft lab testing coroutine enabled")
+        conf.env.append_value("CXXFLAGS", "-DPBFT_TEST_CORO")
 
 def _properly_split(args):
     if args == None:

@@ -23,7 +23,7 @@ PbftCommo::SendPreprepare(parid_t par_id,
                           cliid_t client_id) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
+    if (p.first == site_id) {
       PbftProxy *proxy = (PbftProxy*) p.second;
       FutureAttr fuattr;
       fuattr.callback = [](Future* fu) {
@@ -41,7 +41,7 @@ PbftCommo::SendPrepare(parid_t par_id,
                        const PrepareMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
+    if (p.first == site_id) {
       PbftProxy *proxy = (PbftProxy*) p.second;
       FutureAttr fuattr;
       fuattr.callback = [](Future* fu) {
@@ -58,7 +58,7 @@ PbftCommo::SendCommit(parid_t par_id,
                       const CommitMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
+    if (p.first == site_id) {
       PbftProxy *proxy = (PbftProxy*) p.second;
       FutureAttr fuattr;
       fuattr.callback = [](Future* fu) {
@@ -70,46 +70,12 @@ PbftCommo::SendCommit(parid_t par_id,
 }
 
 void
-PbftCommo::SendPrepared(parid_t par_id,
-                        siteid_t site_id,
-                        const PreparedMessage& mesg) {
-  auto proxies = rpc_par_proxies_[par_id];
-  for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
-      PbftProxy *proxy = (PbftProxy*) p.second;
-      FutureAttr fuattr;
-      fuattr.callback = [](Future* fu) {
-        /* do nothing */
-      };
-      Call_Async(proxy, Prepared, mesg, fuattr);
-    }
-  }
-}
-
-void
-PbftCommo::SendCommitted(parid_t par_id,
-                         siteid_t site_id,
-                         const CommittedMessage& mesg) {
-  auto proxies = rpc_par_proxies_[par_id];
-  for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
-      PbftProxy *proxy = (PbftProxy*) p.second;
-      FutureAttr fuattr;
-      fuattr.callback = [](Future* fu) {
-        /* do nothing */
-      };
-      Call_Async(proxy, Committed, mesg, fuattr);
-    }
-  }
-}
-
-void
 PbftCommo::SendCheckpoint(parid_t par_id,
                           siteid_t site_id,
                           const CheckpointMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
+    if (p.first == site_id) {
       PbftProxy *proxy = (PbftProxy*) p.second;
       FutureAttr fuattr;
       fuattr.callback = [](Future* fu) {
@@ -126,7 +92,7 @@ PbftCommo::SendViewChange(parid_t par_id,
                           const ViewChangeMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
+    if (p.first == site_id) {
       PbftProxy *proxy = (PbftProxy*) p.second;
       FutureAttr fuattr;
       fuattr.callback = [](Future* fu) {
@@ -143,7 +109,7 @@ PbftCommo::SendNewView(parid_t par_id,
                        const NewViewMessage& mesg) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
-    if (p.first == site_id || site_id == static_cast<siteid_t>(-1)) {
+    if (p.first == site_id) {
       PbftProxy *proxy = (PbftProxy*) p.second;
       FutureAttr fuattr;
       fuattr.callback = [](Future* fu) {

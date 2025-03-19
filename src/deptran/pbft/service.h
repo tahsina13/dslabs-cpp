@@ -22,20 +22,17 @@ class PbftServiceImpl : public PbftService {
   PbftServiceImpl(TxLogServer* sched);
 
   RpcHandler(Preprepare, 4, 
-            const PreprepareMessage&, mesg, 
-            const MarshallDeputy&, md_cmd, 
-            uint64_t, timestamp, 
-            cliid_t, client_id) { }
-  RpcHandler(Prepare, 1, const PrepareMessage&, req) { }
-  RpcHandler(Commit, 1, const CommitMessage&, req) { }
+            const PreprepareMessage&, mesg,
+            const MarshallDeputy&, md_cmd,
+            const uint64_t&, timestamp,
+            const cliid_t&, client_id) { }
+  RpcHandler(Prepare, 1, const PrepareMessage&, mesg) { }
+  RpcHandler(Commit, 1, const CommitMessage&, mesg) { }
 
-  RpcHandler(Prepared, 1, const PreparedMessage&, req) { }  
-  RpcHandler(Committed, 1, const CommittedMessage&, req) { }
-            
-  RpcHandler(Checkpoint, 1, const CheckpointMessage&, req) { }
+  RpcHandler(Checkpoint, 1, const CheckpointMessage&, mesg) { }
 
-  RpcHandler(ViewChange, 1, const ViewChangeMessage&, req) { }
-  RpcHandler(NewView, 1, const NewViewMessage&, req) { }
+  RpcHandler(ViewChange, 1, const ViewChangeMessage&, mesg) { }
+  RpcHandler(NewView, 1, const NewViewMessage&, mesg) { }
 };
 
 } // namespace janus

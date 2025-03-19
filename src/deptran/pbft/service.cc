@@ -14,8 +14,8 @@ PbftServiceImpl::PbftServiceImpl(TxLogServer *sched)
 
 void PbftServiceImpl::HandlePreprepare(const PreprepareMessage& mesg,
                                        const MarshallDeputy& md_cmd,
-                                       uint64_t timestamp,
-                                       cliid_t client_id,
+                                       const uint64_t& timestamp,
+                                       const cliid_t& client_id,
                                        rrr::DeferredReply* defer) {
   shared_ptr<Marshallable> cmd = const_cast<MarshallDeputy&>(md_cmd).sp_data_;
   svr_->OnPreprepare(mesg, cmd, timestamp, client_id, std::bind(&rrr::DeferredReply::reply, defer)); 
@@ -29,16 +29,6 @@ void PbftServiceImpl::HandlePrepare(const PrepareMessage& mesg,
 void PbftServiceImpl::HandleCommit(const CommitMessage& mesg,
                                    rrr::DeferredReply* defer) {
   svr_->OnCommit(mesg, std::bind(&rrr::DeferredReply::reply, defer));
-}
-
-void PbftServiceImpl::HandlePrepared(const PreparedMessage& mesg,
-                                     rrr::DeferredReply* defer) {
-  svr_->OnPrepared(mesg, std::bind(&rrr::DeferredReply::reply, defer));
-}
-
-void PbftServiceImpl::HandleCommitted(const CommittedMessage& mesg,
-                                      rrr::DeferredReply* defer) {
-  svr_->OnCommitted(mesg, std::bind(&rrr::DeferredReply::reply, defer));
 }
 
 void PbftServiceImpl::HandleCheckpoint(const CheckpointMessage& mesg,

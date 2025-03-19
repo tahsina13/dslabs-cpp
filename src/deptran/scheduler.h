@@ -23,7 +23,7 @@ class TxLogServer {
   unordered_map<txid_t, mdb::Txn *> mdb_txns_{};
   unordered_map<txid_t, Executor *> executors_{};
 
-  function<void(Marshallable &)> app_next_{};
+  function<std::string(Marshallable &)> app_next_{};
   function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};
 
   shared_ptr<mdb::TxnMgr> mdb_txn_mgr_{};
@@ -154,6 +154,13 @@ class TxLogServer {
   }
 
   void RegLearnerAction(function<void(Marshallable &)> learner_action) {
+    app_next_ = [learner_action](Marshallable &cmd) {
+      learner_action(cmd);
+      return "";
+    };
+  }
+
+  void RegLearnerAction(function<std::string(Marshallable &)> learner_action) {
     app_next_ = learner_action;
   }
 

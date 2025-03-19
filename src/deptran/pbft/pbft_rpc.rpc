@@ -1,52 +1,48 @@
+namespace janus;
+
 struct PreprepareMessage {
+  locid_t server_id; 
   uint64_t view;
   slotid_t seqno;
-  uint64_t digest; 
-  svrid_t server_id; 
+  string digest; 
 }; 
 
 struct PrepareMessage {
+  locid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
-  uint64_t digest;  
-  svrid_t server_id; 
+  string digest; 
 };
 
 struct CommitMessage {
+  locid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
-  uint64_t digest; 
-  svrid_t server_id; 
+  string digest; 
 }; 
-
-struct PreparedMessage {
-  PreprepareMessage preprepare; 
-  vector<PrepareMessage> prepares; 
-}; 
-
-struct CommittedMessage {
-  PreprepareMessage preprepare; 
-  vector<PrepareMessage> prepares; 
-  vector<CommitMessage> commits; 
-}
 
 struct CheckpointMessage {
+  locid_t server_id;
   slotid_t ckpt_seqno;   
-  uint64_t digest; 
+  string digest; 
 }; 
 
 struct ViewChangeMessage {
+  locid_t server_id; 
   uint64_t new_view; 
   slotid_t ckpt_seqno; 
-  vector<CheckpointMessage> checkpoints; 
-  vector<PreprepareMessage> preprepares; 
-  vector<vector<PrepareMessage>> prepares; 
+  map<locid_t, CheckpointMessage> checkpoints; 
+  map<slotid_t, PreprepareMessage> preprepares; 
+  map<slotid_t, map<locid_t, PrepareMessage>> prepares; 
+  string digest; 
 }; 
 
 struct NewViewMessage {
+  locid_t server_id; 
   uint64_t new_view; 
-  vector<ViewChangeMessage> view_changes; 
-  vector<PreprepareMessage> preprepares; 
+  map<locid_t, ViewChangeMessage> view_changes; 
+  map<slotid_t, PreprepareMessage> preprepares; 
+  string digest; 
 }; 
 
 abstract service Pbft {
@@ -57,23 +53,8 @@ abstract service Pbft {
   defer Prepare(PrepareMessage mesg); 
   defer Commit(CommitMessage mesg); 
 
-  defer Prepared(PreparedMessage mesg); 
-  defer Committed(CommittedMessage mesg); 
-  
   defer Checkpoint(CheckpointMessage mesg); 
 
   defer ViewChange(ViewChangeMessage mesg); 
   defer NewView(NewViewMessage mesg); 
-}
-
-abstract service PbftClient {
-  defer SendRequest(MarshallDeputy md_cmd,
-                    uint64_t timestamp,
-                    cliid_t client_id); 
-
-  defer SendReply(uint64_t current_view,
-                  uint64_t timestamp,
-                  cliid_t client_id,
-                  svrid_t server_id,
-                  string res); 
 }
