@@ -16,7 +16,7 @@ class PbftFrame : public Frame {
   static std::mutex pbft_test_mutex_;
   static std::shared_ptr<Coroutine> pbft_test_coro_;
   static uint16_t n_replicas_;
-  static PbftFrame *replicas_[5];
+  static PbftFrame *replicas_[4];
   static uint16_t n_commo_;
   static bool tests_done_;
 #endif

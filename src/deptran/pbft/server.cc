@@ -69,6 +69,13 @@ bool PbftServer::Start(shared_ptr<Marshallable>& cmd,
   if (!logstore_.AddPreprepare(current_view_, seqno, preprepare)) {
     return false; 
   }
+  requests_[seqno] = {
+    .cmd = cmd,
+    .timestamp = timestamp,
+    .client_id = client_id,
+    .state = RequestState::REQ_INIT,
+  }; 
+
   for (const auto& p : commo()->rpc_par_proxies_[partition_id_]) {
     if (p.first != loc_id_) {
       commo()->SendPreprepare(partition_id_, p.first, preprepare, cmd, timestamp, client_id); 
@@ -336,10 +343,16 @@ void PbftServer::OnPreprepare(const PreprepareMessage &mesg,
   if (!logstore_.AddPreprepare(mesg.view, mesg.seqno, mesg)) {
     return; 
   }
-  requests_[mesg.seqno] = {cmd, timestamp, client_id, REQ_INIT};
+  requests_[mesg.seqno] = {
+    .cmd = cmd,
+    .timestamp = timestamp,
+    .client_id = client_id,
+    .state = RequestState::REQ_INIT,
+  }; 
 
   PrepareMessage prepare = CreatePrepare(mesg.view, mesg.seqno); 
   for (const auto& p : commo()->rpc_par_proxies_[partition_id_]) {
+    // TODO: don't send messages to self
     commo()->SendPrepare(partition_id_, p.first, prepare); 
   }
   cb(); 
@@ -364,6 +377,7 @@ void PbftServer::OnPrepare(const PrepareMessage &mesg, const function<void()> &c
     req.state = RequestState::REQ_PREPARED; 
     CommitMessage commit = CreateCommit(mesg.view, mesg.seqno); 
     for (auto p : commo()->rpc_par_proxies_[partition_id_]) {
+      // TODO: don't send messages to self
       commo()->SendCommit(partition_id_, p.first, commit); 
     }
   }

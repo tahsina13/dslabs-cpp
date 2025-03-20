@@ -46,7 +46,7 @@ PbftFrame::PbftFrame(int mode) : Frame(mode) {
 std::mutex PbftFrame::pbft_test_mutex_;
 std::shared_ptr<Coroutine> PbftFrame::pbft_test_coro_ = nullptr;
 uint16_t PbftFrame::n_replicas_ = 0;
-PbftFrame *PbftFrame::replicas_[5];
+PbftFrame *PbftFrame::replicas_[4];
 uint16_t PbftFrame::n_commo_ = 0;
 bool PbftFrame::tests_done_ = false;
 #endif
@@ -96,7 +96,7 @@ TxLogServer *PbftFrame::CreateScheduler() {
 
 #ifdef PBFT_TEST_CORO
   pbft_test_mutex_.lock();
-  verify(n_replicas_ < 5);
+  verify(n_replicas_ < 4);
   replicas_[n_replicas_++] = this;
   pbft_test_mutex_.unlock();
 #endif

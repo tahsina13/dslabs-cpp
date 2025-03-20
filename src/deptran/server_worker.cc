@@ -240,7 +240,7 @@ void ServerWorker::SetupCommo() {
   auto sp_job = std::dynamic_pointer_cast<Job>(sp_j);
   svr_poll_mgr_->add(sp_j);
 
-#ifdef RAFT_TEST_CORO
+#if defined(RAFT_TEST_CORO) || defined(PBFT_TEST_CORO)
 // dead loop this thread for coroutine scheduling 
 // TODO, figure out a better approach
   if (rep_sched_->site_id_ == 0) {

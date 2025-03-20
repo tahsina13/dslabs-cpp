@@ -71,7 +71,7 @@ void PbftLabTest::Cleanup(void) {
 
 int PbftLabTest::testBasicAgree(void) {
   Init2(1, "Basic agreement");
-  // Coroutine::Sleep(ELECTIONTIMEOUT); 
+  Coroutine::Sleep(ELECTIONTIMEOUT); 
   for (int i = 1; i <= 3; i++) {
     // make sure no commits exist before any agreements are started
     AssertNoneCommitted(index_);
