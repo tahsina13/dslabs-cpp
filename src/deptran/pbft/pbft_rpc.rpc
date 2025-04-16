@@ -1,48 +1,52 @@
 namespace janus;
 
 struct PreprepareMessage {
-  locid_t server_id; 
+  siteid_t server_id; 
   uint64_t view;
   slotid_t seqno;
-  string digest; 
+  vector<uint8_t> digest; 
+  vector<uint8_t> signature; 
 }; 
 
 struct PrepareMessage {
-  locid_t server_id; 
+  siteid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
-  string digest; 
+  vector<uint8_t> digest; 
+  vector<uint8_t> signature; 
 };
 
 struct CommitMessage {
-  locid_t server_id; 
+  siteid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
-  string digest; 
+  vector<uint8_t> digest; 
+  vector<uint8_t> signature; 
 }; 
 
 struct CheckpointMessage {
-  locid_t server_id;
+  siteid_t server_id;
   slotid_t ckpt_seqno;   
-  string digest; 
+  vector<uint8_t> ckpt_digest; 
+  vector<uint8_t> signature; 
 }; 
 
 struct ViewChangeMessage {
-  locid_t server_id; 
+  siteid_t server_id; 
   uint64_t new_view; 
   slotid_t ckpt_seqno; 
-  map<locid_t, CheckpointMessage> checkpoints; 
+  map<siteid_t, CheckpointMessage> checkpoints; 
   map<slotid_t, PreprepareMessage> preprepares; 
-  map<slotid_t, map<locid_t, PrepareMessage>> prepares; 
-  string digest; 
+  map<slotid_t, map<siteid_t, PrepareMessage>> prepares; 
+  vector<uint8_t> signature; 
 }; 
 
 struct NewViewMessage {
-  locid_t server_id; 
+  siteid_t server_id; 
   uint64_t new_view; 
-  map<locid_t, ViewChangeMessage> view_changes; 
+  map<siteid_t, ViewChangeMessage> view_changes; 
   map<slotid_t, PreprepareMessage> preprepares; 
-  string digest; 
+  vector<uint8_t> signature; 
 }; 
 
 abstract service Pbft {

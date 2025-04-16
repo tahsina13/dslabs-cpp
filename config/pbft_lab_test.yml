@@ -22,3 +22,17 @@ process:
 
 host:
   localhost: 127.0.0.1
+
+keys:
+  s101:
+    privkey: "keys/s101_priv.pem"
+    pubkey: "keys/s101_pub.pem"
+  s102:
+    privkey: "keys/s102_priv.pem"
+    pubkey: "keys/s102_pub.pem"
+  s103:
+    privkey: "keys/s103_priv.pem"
+    pubkey: "keys/s103_pub.pem"
+  s104:
+    privkey: "keys/s104_priv.pem"
+    pubkey: "keys/s104_pub.pem"

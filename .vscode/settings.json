@@ -69,6 +69,14 @@
     "strstream": "cpp",
     "bit": "cpp",
     "codecvt": "cpp",
-    "cfenv": "cpp"
+    "cfenv": "cpp",
+    "hash_map": "cpp",
+    "hash_set": "cpp",
+    "compare": "cpp",
+    "concepts": "cpp",
+    "forward_list": "cpp",
+    "numbers": "cpp",
+    "semaphore": "cpp",
+    "stop_token": "cpp"
   }
 }

@@ -1,6 +1,9 @@
 //#include "all.h"
 #include <algorithm>
 
+#include <boost/filesystem.hpp>
+#include <openssl/pem.h>
+
 #include "__dep__.h"
 #include "multi_value.h"
 #include "constants.h"
@@ -322,6 +325,9 @@ void Config::LoadYML(std::string &filename) {
   }
   if (config["failover"]) {
     LoadFailoverYML(config["failover"]);
+  }
+  if (config["keys"]) {
+    LoadKeysYML(config["keys"]); 
   }
   if (config["n_concurrent"]) {
     n_concurrent_ = config["n_concurrent"].as<uint16_t>();
@@ -717,6 +723,58 @@ void Config::LoadFailoverYML(YAML::Node config) {
   failover_stop_int_ = config["stop_interval"].as<int32_t>();
 }
 
+void Config::LoadKeysYML(YAML::Node config) {
+  Config::SiteInfo* site = NULL; 
+  for (auto it = config.begin(); it != config.end(); it++) {
+    if ((site = SiteByName(it->first.as<string>())) != NULL) {
+      auto keys = it->second; 
+      if (keys["privkey"] && keys["pubkey"]) {
+        std::string privkey_path = keys["privkey"].as<string>();
+        std::string pubkey_path = keys["pubkey"].as<string>();
+        boost::filesystem::create_directories(
+            boost::filesystem::path(privkey_path).parent_path());
+        boost::filesystem::create_directories(
+            boost::filesystem::path(pubkey_path).parent_path());
+        FILE *priv_fp = fopen(privkey_path.c_str(), "r");
+        FILE *pub_fp = fopen(pubkey_path.c_str(), "r");
+        if (priv_fp == NULL || pub_fp == NULL) {
+          Log_info("Generating RSA keys for site %s", site->name.c_str());
+          if (priv_fp != NULL) {
+            fclose(priv_fp); 
+          }
+          if (pub_fp != NULL) {
+            fclose(pub_fp); 
+          }
+          EVP_PKEY *key = EVP_RSA_gen(2048); 
+          priv_fp = fopen(privkey_path.c_str(), "w");
+          pub_fp = fopen(pubkey_path.c_str(), "w");
+          PEM_write_PrivateKey(priv_fp, key, NULL, NULL, 0, NULL, NULL);
+          PEM_write_PUBKEY(pub_fp, key);
+          fclose(priv_fp); 
+          fclose(pub_fp); 
+          EVP_PKEY_free(key); 
+          priv_fp = fopen(privkey_path.c_str(), "r");
+          pub_fp = fopen(pubkey_path.c_str(), "r");
+        }
+        verify(priv_fp != NULL && pub_fp != NULL); 
+        Log_info("Loading RSA keys for site %s", site->name.c_str());
+        EVP_PKEY *privkey = PEM_read_PrivateKey(priv_fp, NULL, NULL, NULL);
+        std::shared_ptr<EVP_PKEY> privkey_ptr(privkey, [](EVP_PKEY *p) {
+          EVP_PKEY_free(p); 
+        });
+        site->privkey = privkey_ptr; 
+        EVP_PKEY *pubkey = PEM_read_PUBKEY(pub_fp, NULL, NULL, NULL);
+        std::shared_ptr<EVP_PKEY> pubkey_ptr(pubkey, [](EVP_PKEY *p) {
+          EVP_PKEY_free(p); 
+        });
+        site_pubkey_map_[site->id] = pubkey_ptr; 
+        fclose(priv_fp); 
+        fclose(pub_fp); 
+      }
+    }
+  }
+}
+
 void Config::InitTPCCD() {
   // TODO particular configuration for certain workloads.
   auto &tb_infos = sharding_->tb_infos_;
@@ -937,6 +995,22 @@ Config::SiteInfo* Config::SiteByName(std::string name) {
     }
   }
   return nullptr;
+}
+
+std::shared_ptr<EVP_PKEY> Config::SitePubKeyById(uint32_t id) {
+  auto it = site_pubkey_map_.find(id);
+  if (it != site_pubkey_map_.end()) {
+    return it->second;
+  }
+  return nullptr;
+}
+
+std::shared_ptr<EVP_PKEY> Config::SitePubKeyByName(std::string name) {
+  Config::SiteInfo *site = nullptr; 
+  if ((site = SiteByName(name)) != nullptr) {
+    return SitePubKeyById(site->id);
+  }
+  return nullptr; 
 }
 
 int Config::get_threads(unsigned int& threads) {

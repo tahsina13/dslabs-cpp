@@ -71,8 +71,7 @@ def configure(conf):
 
     _enable_tcmalloc(conf)
     _enable_jemalloc(conf)
-    # _enable_cxx14(conf)
-    _enable_cxx17(conf)
+    _enable_cxx14(conf)
     _enable_debug(conf)
     _enable_profile(conf)
     _enable_event_timeout(conf)
@@ -307,13 +306,6 @@ def _enable_cxx14(conf):
         conf.env.append_value("CXXFLAGS", "-stdlib=libc++")
         conf.env.append_value("LINKFLAGS", "-stdlib=libc++")
     conf.env.append_value("CXXFLAGS", "-std=c++14")
-
-def _enable_cxx17(conf): 
-    Logs.pprint("PINK", "C++17 features enabled")
-    if sys.platform == "darwin":
-        conf.env.append_value("CXXFLAGS", "-stdlib=libc++")
-        conf.env.append_value("LINKFLAGS", "-stdlib=libc++")
-    conf.env.append_value("CXXFLAGS", "-std=c++17") 
 
 def _enable_profile(conf):
     if Options.options.prof:

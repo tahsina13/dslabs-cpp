@@ -35,9 +35,10 @@ class PbftServer : public TxLogServer {
   /* Your data here */
   uint64_t num_proxies_; 
   uint64_t target_majority_; 
+  uint64_t target_ckpt_majority_; 
 
   uint64_t current_view_; 
-  locid_t current_primary_; 
+  siteid_t current_primary_; 
 
   slotid_t low_watermark_; 
   slotid_t high_watermark_; 
@@ -52,14 +53,48 @@ class PbftServer : public TxLogServer {
   const EVP_MD *md_; 
   EVP_MD_CTX *mdctx_; 
 
-  /* Your functions here */
-  PreprepareMessage CreatePreprepare(uint64_t view, slotid_t seqno); 
-  PrepareMessage CreatePrepare(uint64_t view, slotid_t seqno);
-  CommitMessage CreateCommit(uint64_t view, slotid_t seqno);
-  CheckpointMessage CreateCheckpoint(slotid_t ckpt_seqno);
-  ViewChangeMessage CreateViewChange(uint64_t new_view); 
-  NewViewMessage CreateNewView(uint64_t new_view, const std::map<locid_t, ViewChangeMessage> &view_changes);
+  EVP_PKEY_CTX *privkey_ctx_; 
+  std::map<siteid_t, std::shared_ptr<EVP_PKEY_CTX>> pubkey_ctx_; 
 
+  /* Your functions here */
+  std::vector<uint8_t> SignHash(const std::vector<uint8_t> &hash); 
+  bool VerifyHash(const std::vector<uint8_t> &hash, const std::vector<uint8_t> &signature, siteid_t site_id);
+
+  PreprepareMessage CreatePreprepare(uint64_t view, slotid_t seqno, const std::vector<uint8_t> &digest); 
+  PrepareMessage CreatePrepare(uint64_t view, slotid_t seqno, const std::vector<uint8_t> &digest);
+  CommitMessage CreateCommit(uint64_t view, slotid_t seqno, const std::vector<uint8_t> &digest);
+  CheckpointMessage CreateCheckpoint(slotid_t ckpt_seqno, const std::vector<uint8_t> &ckpt_digest);
+  ViewChangeMessage CreateViewChange(uint64_t new_view); 
+  NewViewMessage CreateNewView(uint64_t new_view, const std::map<siteid_t, ViewChangeMessage> &view_changes);
+
+  std::vector<uint8_t> GetPreprepareHash(const PreprepareMessage &mesg);
+  std::vector<uint8_t> GetPrepareHash(const PrepareMessage &mesg);
+  std::vector<uint8_t> GetCommitHash(const CommitMessage &mesg);
+  std::vector<uint8_t> GetCheckpointHash(const CheckpointMessage &mesg);
+  std::vector<uint8_t> GetViewChangeHash(const ViewChangeMessage &mesg);
+  std::vector<uint8_t> GetNewViewHash(const NewViewMessage &mesg);
+
+  void SignPreprepare(PreprepareMessage &mesg); 
+  void SignPrepare(PrepareMessage &mesg);
+  void SignCommit(CommitMessage &mesg);
+  void SignCheckpoint(CheckpointMessage &mesg);
+  void SignViewChange(ViewChangeMessage &mesg);
+  void SignNewView(NewViewMessage &mesg);
+
+  bool VerifyPreprepare(const PreprepareMessage &mesg);
+  bool VerifyPrepare(const PrepareMessage &mesg);
+  bool VerifyCommit(const CommitMessage &mesg);
+  bool VerifyCheckpoint(const CheckpointMessage &mesg);
+  bool VerifyViewChange(const ViewChangeMessage &mesg); 
+  bool VerifyNewView(const NewViewMessage &mesg); 
+  
+  void HandlePreprepare(const PreprepareMessage &mesg); 
+  void HandlePrepare(const PrepareMessage &mesg); 
+  void HandleCommit(const CommitMessage &mesg); 
+  void HandleCheckpoint(const CheckpointMessage &mesg); 
+  void HandleViewChange(const ViewChangeMessage &mesg); 
+  void HandleNewView(const NewViewMessage &mesg); 
+  
   void OnPreprepare(const PreprepareMessage &mesg, 
                     std::shared_ptr<Marshallable> cmd,
                     uint64_t timestamp,

@@ -2,67 +2,77 @@
 
 namespace janus {
 
-bool LogStore::HasPreprepare(uint64_t view, slotid_t slot) const {
-  return preprepares_.count(std::make_pair(view, slot)) > 0; 
+bool LogStore::HasPreprepare(slotid_t slot) const {
+  return preprepares_.count(slot) > 0; 
 }
 
-bool LogStore::AddPreprepare(uint64_t view, slotid_t slot, const PreprepareMessage &mesg) {
-  if (HasPreprepare(view, slot)) {
+bool LogStore::AddPreprepare(slotid_t slot, const PreprepareMessage &mesg) {
+  if (HasPreprepare(slot)) {
     return false; 
   }
-  preprepares_[std::make_pair(view, slot)] = mesg; 
+  preprepares_[slot] = mesg; 
   return true; 
 }
 
-const PreprepareMessage &LogStore::GetPreprepare(uint64_t view, slotid_t slot) const {
-  verify(HasPreprepare(view, slot));
-  return preprepares_.at(std::make_pair(view, slot)); 
+const PreprepareMessage &LogStore::GetPreprepare(slotid_t slot) const {
+  verify(HasPreprepare(slot));
+  return preprepares_.at(slot); 
 }
 
 
-bool LogStore::HasPrepare(uint64_t view, slotid_t slot, locid_t server_id) const {
-  ViewSlotPair index = std::make_pair(view, slot); 
-  return prepares_.count(index) > 0 && prepares_.at(index).count(server_id) > 0; 
+bool LogStore::HasPrepare(slotid_t slot, siteid_t server_id) const {
+  return prepares_.count(slot) > 0 && prepares_.at(slot).count(server_id) > 0; 
 } 
 
-bool LogStore::AddPrepare(uint64_t view, slotid_t slot, locid_t server_id, const PrepareMessage &mesg) {
-  if (HasPrepare(view, slot, server_id)) {
+bool LogStore::AddPrepare(slotid_t slot, siteid_t server_id, const PrepareMessage &mesg) {
+  if (HasPrepare(slot, server_id)) {
     return false; 
   }
-  prepares_[std::make_pair(view, slot)][server_id] = mesg; 
+  prepares_[slot][server_id] = mesg; 
   return true; 
 }
 
-const std::map<locid_t, PrepareMessage> &LogStore::GetPrepares(uint64_t view, slotid_t slot) const {
-  ViewSlotPair index = std::make_pair(view, slot); 
-  verify(prepares_.count(index) > 0);
-  return prepares_.at(index); 
+size_t LogStore::GetPrepareCount(slotid_t slot) const {
+  if (prepares_.count(slot) == 0) {
+    return 0; 
+  }
+  return prepares_.at(slot).size(); 
 }
 
-bool LogStore::HasCommit(uint64_t view, slotid_t slot, locid_t server_id) const {
-  ViewSlotPair index = std::make_pair(view, slot); 
-  return commits_.count(index) > 0 && commits_.at(index).count(server_id) > 0; 
+const std::map<siteid_t, PrepareMessage> &LogStore::GetPrepares(slotid_t slot) const {
+  verify(prepares_.count(slot) > 0);
+  return prepares_.at(slot); 
 }
 
-bool LogStore::AddCommit(uint64_t view, slotid_t slot, locid_t server_id, const CommitMessage &mesg) {
-  if (HasCommit(view, slot, server_id)) {
+bool LogStore::HasCommit(slotid_t slot, siteid_t server_id) const {
+  return commits_.count(slot) > 0 && commits_.at(slot).count(server_id) > 0; 
+}
+
+bool LogStore::AddCommit(slotid_t slot, siteid_t server_id, const CommitMessage &mesg) {
+  if (HasCommit(slot, server_id)) {
     return false; 
   }
-  commits_[std::make_pair(view, slot)][server_id] = mesg; 
+  commits_[slot][server_id] = mesg; 
   return true; 
 }
 
-const std::map<locid_t, CommitMessage> &LogStore::GetCommits(uint64_t view, slotid_t slot) const {
-  ViewSlotPair index = std::make_pair(view, slot); 
-  verify(commits_.count(index) > 0);
-  return commits_.at(index); 
+size_t LogStore::GetCommitCount(slotid_t slot) const {
+  if (commits_.count(slot) == 0) {
+    return 0; 
+  }
+  return commits_.at(slot).size(); 
 }
 
-bool LogStore::HasCheckpoint(slotid_t slot, locid_t server_id) const {
+const std::map<siteid_t, CommitMessage> &LogStore::GetCommits(slotid_t slot) const {
+  verify(commits_.count(slot) > 0);
+  return commits_.at(slot); 
+}
+
+bool LogStore::HasCheckpoint(slotid_t slot, siteid_t server_id) const {
   return checkpoints_.count(slot) > 0 && checkpoints_.at(slot).count(server_id) > 0; 
 }
 
-bool LogStore::AddCheckpoint(slotid_t slot, locid_t server_id, const CheckpointMessage &mesg) {
+bool LogStore::AddCheckpoint(slotid_t slot, siteid_t server_id, const CheckpointMessage &mesg) {
   if (HasCheckpoint(slot, server_id)) {
     return false; 
   }
@@ -70,16 +80,23 @@ bool LogStore::AddCheckpoint(slotid_t slot, locid_t server_id, const CheckpointM
   return true; 
 }
 
-const std::map<locid_t, CheckpointMessage> &LogStore::GetCheckpoints(slotid_t slot) const {
+size_t LogStore::GetCheckpointCount(slotid_t slot) const {
+  if (checkpoints_.count(slot) == 0) {
+    return 0; 
+  }
+  return checkpoints_.at(slot).size(); 
+}
+
+const std::map<siteid_t, CheckpointMessage> &LogStore::GetCheckpoints(slotid_t slot) const {
   verify(checkpoints_.count(slot) > 0);
   return checkpoints_.at(slot); 
 }
 
-bool LogStore::HasViewChange(uint64_t view, locid_t server_id) const {
+bool LogStore::HasViewChange(uint64_t view, siteid_t server_id) const {
   return view_changes_.count(view) > 0 && view_changes_.at(view).count(server_id) > 0; 
 }
 
-bool LogStore::AddViewChange(uint64_t view, locid_t server_id, const ViewChangeMessage &mesg) {
+bool LogStore::AddViewChange(uint64_t view, siteid_t server_id, const ViewChangeMessage &mesg) {
   if (HasViewChange(view, server_id)) {
     return false; 
   }
@@ -87,7 +104,14 @@ bool LogStore::AddViewChange(uint64_t view, locid_t server_id, const ViewChangeM
   return true; 
 }
 
-const std::map<locid_t, ViewChangeMessage> &LogStore::GetViewChanges(uint64_t view) const {
+size_t LogStore::GetViewChangeCount(uint64_t view) const {
+  if (view_changes_.count(view) == 0) {
+    return 0; 
+  }
+  return view_changes_.at(view).size(); 
+}
+
+const std::map<siteid_t, ViewChangeMessage> &LogStore::GetViewChanges(uint64_t view) const {
   verify(view_changes_.count(view) > 0);
   return view_changes_.at(view); 
 }
@@ -99,10 +123,9 @@ const std::map<locid_t, ViewChangeMessage> &LogStore::GetViewChanges(uint64_t vi
  * @param slot The slot number.
  */
 void LogStore::ClearLog(uint64_t view, slotid_t slot) {
-  ViewSlotPair view_slot_pair = std::make_pair(view, slot); 
-  preprepares_.erase(preprepares_.begin(), preprepares_.upper_bound(view_slot_pair)); 
-  prepares_.erase(prepares_.begin(), prepares_.upper_bound(view_slot_pair)); 
-  commits_.erase(commits_.begin(), commits_.upper_bound(view_slot_pair));  
+  preprepares_.erase(preprepares_.begin(), preprepares_.upper_bound(slot)); 
+  prepares_.erase(prepares_.begin(), prepares_.upper_bound(slot)); 
+  commits_.erase(commits_.begin(), commits_.upper_bound(slot));  
   checkpoints_.erase(checkpoints_.begin(), checkpoints_.upper_bound(slot)); 
   view_changes_.erase(view_changes_.begin(), view_changes_.upper_bound(view)); 
 }

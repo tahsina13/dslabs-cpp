@@ -1,6 +1,8 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
+#include <openssl/evp.h>
+
 #include "__dep__.h"
 #include "constants.h"
 #include "sharding.h"
@@ -101,6 +103,7 @@ class Config {
     uint32_t n_thread;   // should be 1 for now
     SiteInfoType type_; 
     uint32_t partition_id_=0;
+    std::shared_ptr<EVP_PKEY> privkey; 
 
     SiteInfo() = delete;
     SiteInfo(uint32_t id) : id(id) {}
@@ -143,6 +146,7 @@ class Config {
   vector<SiteInfo> par_clients_;
   map<string, string> proc_host_map_;
   map<string, string> site_proc_map_;
+  map<siteid_t, std::shared_ptr<EVP_PKEY>> site_pubkey_map_; 
 
   Sharding* sharding_;
 
@@ -186,6 +190,7 @@ class Config {
   void LoadFailoverYML(YAML::Node config);
   void LoadSchemaTableColumnYML(Sharding::tb_info_t &tb_info,
                                 YAML::Node column);
+  void LoadKeysYML(YAML::Node config); 
 
 
   void InitMode(std::string&cc_name, string&ab_name);
@@ -215,6 +220,8 @@ class Config {
   vector<SiteInfo> SitesByLocaleId(uint32_t locale_id, SiteInfoType type=SERVER);
   vector<SiteInfo> SitesByProcessName(string proc_name, SiteInfoType type=SERVER);
   SiteInfo* SiteByName(std::string name);
+  std::shared_ptr<EVP_PKEY> SitePubKeyById(uint32_t id); 
+  std::shared_ptr<EVP_PKEY> SitePubKeyByName(std::string name); 
   int GetPartitionSize(parid_t par_id);
   vector<SiteInfo> GetMyServers() { return SitesByProcessName(this->proc_name_, SERVER); }
   vector<SiteInfo> GetMyClients() { return SitesByProcessName(this->proc_name_, CLIENT); }
