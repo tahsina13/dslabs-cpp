@@ -78,8 +78,7 @@ bool PbftServer::Start(shared_ptr<Marshallable>& cmd,
     return false; 
   }
 
-  std::vector<uint8_t> digest; // TODO: generate digest from cmd
-
+  std::string digest = GetDigest(cmd); 
   PreprepareMessage preprepare = CreatePreprepare(current_view_, seqno, digest); 
   SignPreprepare(preprepare); 
   if (!logstore_.AddPreprepare(seqno, preprepare)) {
@@ -119,7 +118,28 @@ bool PbftServer::GetReply(uint64_t timestamp, cliid_t client_id, string *reply) 
   return true; 
 }
 
-std::vector<uint8_t> PbftServer::SignHash(const std::vector<uint8_t> &hash) {
+std::string PbftServer::GetDigest(const std::shared_ptr<Marshallable> &cmd) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_); 
+  std::string cmd_str = cmd->ToString(); 
+  unsigned char *raw_digest; 
+  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
+    Log_fatal("EVP_DigestInit_ex failed");
+  }
+  if (EVP_DigestUpdate(mdctx_, cmd_str.data(), cmd_str.size()) != 1) {
+    Log_fatal("EVP_DigestUpdate failed");
+  }
+  if ((raw_digest= (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
+    Log_fatal("OPENSSL_malloc failed");
+  }
+  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
+    Log_fatal("EVP_DigestFinal_ex failed");
+  }
+  std::string digest (raw_digest, raw_digest + EVP_MD_size(md_)); 
+  OPENSSL_free(raw_digest);
+  return digest; 
+}
+
+std::string PbftServer::SignHash(const std::string &hash) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   size_t siglen; 
   unsigned char *raw_sig; 
@@ -140,12 +160,12 @@ std::vector<uint8_t> PbftServer::SignHash(const std::vector<uint8_t> &hash) {
                     (const unsigned char *)hash.data(), hash.size()) != 1) {
     Log_fatal("EVP_PKEY_sign failed");
   }
-  std::vector<uint8_t> signature (raw_sig, raw_sig + siglen);
+  std::string signature (raw_sig, raw_sig + siglen);
   OPENSSL_free(raw_sig); 
   return signature; 
 }
 
-bool PbftServer::VerifyHash(const std::vector<uint8_t> &hash, const std::vector<uint8_t> &signature, siteid_t site_id) {
+bool PbftServer::VerifyHash(const std::string &hash, const std::string &signature, siteid_t site_id) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   verify(pubkey_ctx_.count(site_id) > 0); 
   EVP_PKEY_CTX *pubkey_ctx = pubkey_ctx_.at(site_id).get(); 
@@ -163,7 +183,7 @@ bool PbftServer::VerifyHash(const std::vector<uint8_t> &hash, const std::vector<
   return ret == 1; 
 }
 
-PreprepareMessage PbftServer::CreatePreprepare(uint64_t view, slotid_t seqno, const std::vector<uint8_t> &digest) {
+PreprepareMessage PbftServer::CreatePreprepare(uint64_t view, slotid_t seqno, const std::string &digest) {
   return {
     .server_id = site_id_,
     .view = view,
@@ -172,7 +192,7 @@ PreprepareMessage PbftServer::CreatePreprepare(uint64_t view, slotid_t seqno, co
   };
 }
 
-PrepareMessage PbftServer::CreatePrepare(uint64_t view, slotid_t seqno, const std::vector<uint8_t> &digest) {
+PrepareMessage PbftServer::CreatePrepare(uint64_t view, slotid_t seqno, const std::string &digest) {
   return {
     .server_id = site_id_,
     .view = view,
@@ -181,7 +201,7 @@ PrepareMessage PbftServer::CreatePrepare(uint64_t view, slotid_t seqno, const st
   }; 
 }
 
-CommitMessage PbftServer::CreateCommit(uint64_t view, slotid_t seqno, const std::vector<uint8_t> &digest) {
+CommitMessage PbftServer::CreateCommit(uint64_t view, slotid_t seqno, const std::string &digest) {
   return {
     .server_id = site_id_,
     .view = view,
@@ -190,7 +210,7 @@ CommitMessage PbftServer::CreateCommit(uint64_t view, slotid_t seqno, const std:
   }; 
 }
 
-CheckpointMessage PbftServer::CreateCheckpoint(slotid_t ckpt_seqno, const std::vector<uint8_t> &ckpt_digest) {
+CheckpointMessage PbftServer::CreateCheckpoint(slotid_t ckpt_seqno, const std::string &ckpt_digest) {
   return {
     .server_id = site_id_,
     .ckpt_seqno = ckpt_seqno,
@@ -250,7 +270,7 @@ NewViewMessage PbftServer::CreateNewView(uint64_t new_view, const std::map<sitei
   }
   for (slotid_t slot = min_s + 1; slot <= max_s; slot++) {
     if (!preprepares.count(slot)) {
-      std::vector<uint8_t> digest; // TODO: generate digest from noop cmd
+      std::string digest; // TODO: generate digest from noop cmd
       preprepares[slot] = CreatePreprepare(new_view, slot, digest);
     }
   }
@@ -262,7 +282,7 @@ NewViewMessage PbftServer::CreateNewView(uint64_t new_view, const std::map<sitei
   };
 }
 
-std::vector<uint8_t> PbftServer::GetPreprepareHash(const PreprepareMessage &mesg) {
+std::string PbftServer::GetPreprepareHash(const PreprepareMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   unsigned char *raw_hash; 
   if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
@@ -279,12 +299,12 @@ std::vector<uint8_t> PbftServer::GetPreprepareHash(const PreprepareMessage &mesg
   if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
     Log_fatal("EVP_DigestFinal_ex failed");
   }
-  std::vector<uint8_t> hash (raw_hash, raw_hash + EVP_MD_size(md_)); 
+  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_)); 
   OPENSSL_free(raw_hash);
   return hash; 
 }
 
-std::vector<uint8_t> PbftServer::GetPrepareHash(const PrepareMessage &mesg) {
+std::string PbftServer::GetPrepareHash(const PrepareMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   unsigned char *raw_hash; 
   if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
@@ -302,12 +322,12 @@ std::vector<uint8_t> PbftServer::GetPrepareHash(const PrepareMessage &mesg) {
   if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
     Log_fatal("EVP_DigestFinal_ex failed");
   }
-  std::vector<uint8_t> hash (raw_hash, raw_hash + EVP_MD_size(md_));
+  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
   OPENSSL_free(raw_hash);
   return hash; 
 }
 
-std::vector<uint8_t> PbftServer::GetCommitHash(const CommitMessage &mesg) {
+std::string PbftServer::GetCommitHash(const CommitMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   unsigned char *raw_hash; 
   if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
@@ -325,12 +345,12 @@ std::vector<uint8_t> PbftServer::GetCommitHash(const CommitMessage &mesg) {
   if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
     Log_fatal("EVP_DigestFinal_ex failed");
   }
-  std::vector<uint8_t> hash (raw_hash, raw_hash + EVP_MD_size(md_));
+  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
   OPENSSL_free(raw_hash);
   return hash; 
 }
 
-std::vector<uint8_t> PbftServer::GetCheckpointHash(const CheckpointMessage &mesg) {
+std::string PbftServer::GetCheckpointHash(const CheckpointMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   unsigned char *raw_hash; 
   if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
@@ -347,12 +367,12 @@ std::vector<uint8_t> PbftServer::GetCheckpointHash(const CheckpointMessage &mesg
   if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
     Log_fatal("EVP_DigestFinal_ex failed");
   }
-  std::vector<uint8_t> hash (raw_hash, raw_hash + EVP_MD_size(md_));
+  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
   OPENSSL_free(raw_hash);
   return hash; 
 }
 
-std::vector<uint8_t> PbftServer::GetViewChangeHash(const ViewChangeMessage &mesg) {
+std::string PbftServer::GetViewChangeHash(const ViewChangeMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   unsigned char *raw_hash; 
   if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
@@ -389,12 +409,12 @@ std::vector<uint8_t> PbftServer::GetViewChangeHash(const ViewChangeMessage &mesg
   if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
     Log_fatal("EVP_DigestFinal_ex failed");
   }
-  std::vector<uint8_t> hash (raw_hash, raw_hash + EVP_MD_size(md_));
+  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
   OPENSSL_free(raw_hash);
   return hash; 
 }
 
-std::vector<uint8_t> PbftServer::GetNewViewHash(const NewViewMessage &mesg) {
+std::string PbftServer::GetNewViewHash(const NewViewMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   unsigned char *raw_hash; 
   if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
@@ -422,58 +442,58 @@ std::vector<uint8_t> PbftServer::GetNewViewHash(const NewViewMessage &mesg) {
   if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
     Log_fatal("EVP_DigestFinal_ex failed");
   }
-  std::vector<uint8_t> hash (raw_hash, raw_hash + EVP_MD_size(md_));
+  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
   OPENSSL_free(raw_hash);
   return hash; 
 }
 
 void PbftServer::SignPreprepare(PreprepareMessage &mesg) {
-  std::vector<uint8_t> hash = GetPreprepareHash(mesg); 
+  std::string hash = GetPreprepareHash(mesg); 
   mesg.signature = SignHash(hash);
 }
 
 void PbftServer::SignPrepare(PrepareMessage &mesg) {
-  std::vector<uint8_t> hash = GetPrepareHash(mesg); 
+  std::string hash = GetPrepareHash(mesg); 
   mesg.signature = SignHash(hash);
 }
 
 void PbftServer::SignCommit(CommitMessage &mesg) {
-  std::vector<uint8_t> hash = GetCommitHash(mesg); 
+  std::string hash = GetCommitHash(mesg); 
   mesg.signature = SignHash(hash);
 }
 
 void PbftServer::SignCheckpoint(CheckpointMessage &mesg) {
-  std::vector<uint8_t> hash = GetCheckpointHash(mesg); 
+  std::string hash = GetCheckpointHash(mesg); 
   mesg.signature = SignHash(hash);
 }
 
 void PbftServer::SignViewChange(ViewChangeMessage &mesg) {
-  std::vector<uint8_t> hash = GetViewChangeHash(mesg); 
+  std::string hash = GetViewChangeHash(mesg); 
   mesg.signature = SignHash(hash);
 }
 
 void PbftServer::SignNewView(NewViewMessage &mesg) {
-  std::vector<uint8_t> hash = GetNewViewHash(mesg); 
+  std::string hash = GetNewViewHash(mesg); 
   mesg.signature = SignHash(hash);
 }
 
 bool PbftServer::VerifyPreprepare(const PreprepareMessage &mesg) {
-  std::vector<uint8_t> hash = GetPreprepareHash(mesg); 
+  std::string hash = GetPreprepareHash(mesg); 
   return VerifyHash(hash, mesg.signature, mesg.server_id); 
 }
 
 bool PbftServer::VerifyPrepare(const PrepareMessage &mesg) {
-  std::vector<uint8_t> hash = GetPrepareHash(mesg); 
+  std::string hash = GetPrepareHash(mesg); 
   return VerifyHash(hash, mesg.signature, mesg.server_id); 
 }
 
 bool PbftServer::VerifyCommit(const CommitMessage &mesg) {
-  std::vector<uint8_t> hash = GetCommitHash(mesg); 
+  std::string hash = GetCommitHash(mesg); 
   return VerifyHash(hash, mesg.signature, mesg.server_id); 
 }
 
 bool PbftServer::VerifyCheckpoint(const CheckpointMessage &mesg) {
-  std::vector<uint8_t> hash = GetCheckpointHash(mesg); 
+  std::string hash = GetCheckpointHash(mesg); 
   return VerifyHash(hash, mesg.signature, mesg.server_id); 
 }
 
@@ -498,7 +518,7 @@ bool PbftServer::VerifyViewChange(const ViewChangeMessage &mesg) {
       }
     }
   }
-  std::vector<uint8_t> hash = GetViewChangeHash(mesg);
+  std::string hash = GetViewChangeHash(mesg);
   return VerifyHash(hash, mesg.signature, mesg.server_id);
 }
 
@@ -509,7 +529,7 @@ bool PbftServer::VerifyNewView(const NewViewMessage &mesg) {
       return false; 
     }
   }
-  std::vector<uint8_t> hash = GetNewViewHash(mesg); 
+  std::string hash = GetNewViewHash(mesg); 
   return VerifyHash(hash, mesg.signature, mesg.server_id); 
 }
 
@@ -636,7 +656,7 @@ void PbftServer::HandleNewView(const NewViewMessage &mesg) {
 }
 
 void PbftServer::OnPreprepare(const PreprepareMessage &mesg, 
-                              std::shared_ptr<Marshallable> cmd,
+                              const std::shared_ptr<Marshallable> &cmd,
                               uint64_t timestamp,
                               cliid_t client_id,
                               const function<void()> &cb) {
@@ -649,12 +669,10 @@ void PbftServer::OnPreprepare(const PreprepareMessage &mesg,
     return; 
   }
 
-  std::vector<uint8_t> digest = mesg.digest; // TODO: figure out how to generate digest from cmd
-
   bool is_from_primary = mesg.server_id == current_primary_;
   bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
-  bool is_digest_valid = mesg.digest == digest; 
+  bool is_digest_valid = mesg.digest == GetDigest(cmd); 
   if (!is_from_primary || !is_same_view || !is_seqno_valid || !is_digest_valid) {
     return; 
   }
@@ -684,11 +702,12 @@ void PbftServer::OnPrepare(const PrepareMessage &mesg, const function<void()> &c
   bool is_from_primary = mesg.server_id == current_primary_; 
   bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
+  bool is_digest_valid = mesg.digest == preprepare.digest; 
   bool is_matches = preprepare.view == mesg.view && 
                     preprepare.seqno == mesg.seqno && 
                     preprepare.digest == mesg.digest;
   bool is_req_init = req.state == RequestState::REQ_INIT;
-  if (is_from_primary || !is_same_view || !is_seqno_valid || !is_matches || !is_req_init) {
+  if (is_from_primary || !is_same_view || !is_seqno_valid || !is_digest_valid || !is_matches || !is_req_init) {
     return; 
   }
 
@@ -710,11 +729,12 @@ void PbftServer::OnCommit(const CommitMessage &mesg, const function<void()> &cb)
 
   bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
+  bool is_digest_valid = mesg.digest == preprepare.digest;
   bool is_matches = preprepare.view == mesg.view && 
                     preprepare.seqno == mesg.seqno && 
                     preprepare.digest == mesg.digest;
   bool is_req_prepared = req.state == RequestState::REQ_PREPARED;
-  if (in_view_change_ || !is_same_view || !is_seqno_valid || !is_matches || !is_req_prepared) {
+  if (in_view_change_ || !is_same_view || !is_seqno_valid || !is_digest_valid || !is_matches || !is_req_prepared) {
     return; 
   }
 

@@ -21,7 +21,11 @@ class Marshallable {
   virtual string ToString() {
     Marshal m;
     ToMarshal(m);
-    verify(0); 
+    void *p = malloc(m.content_size()); 
+    m.peek(p, m.content_size()); 
+    string s (static_cast<char*>(p), m.content_size()); 
+    free(p); 
+    return s; 
   }
 };
 

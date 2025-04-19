@@ -4,31 +4,31 @@ struct PreprepareMessage {
   siteid_t server_id; 
   uint64_t view;
   slotid_t seqno;
-  vector<uint8_t> digest; 
-  vector<uint8_t> signature; 
+  string digest; 
+  string signature; 
 }; 
 
 struct PrepareMessage {
   siteid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
-  vector<uint8_t> digest; 
-  vector<uint8_t> signature; 
+  string digest; 
+  string signature; 
 };
 
 struct CommitMessage {
   siteid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
-  vector<uint8_t> digest; 
-  vector<uint8_t> signature; 
+  string digest; 
+  string signature; 
 }; 
 
 struct CheckpointMessage {
   siteid_t server_id;
   slotid_t ckpt_seqno;   
-  vector<uint8_t> ckpt_digest; 
-  vector<uint8_t> signature; 
+  string ckpt_digest; 
+  string signature; 
 }; 
 
 struct ViewChangeMessage {
@@ -38,7 +38,7 @@ struct ViewChangeMessage {
   map<siteid_t, CheckpointMessage> checkpoints; 
   map<slotid_t, PreprepareMessage> preprepares; 
   map<slotid_t, map<siteid_t, PrepareMessage>> prepares; 
-  vector<uint8_t> signature; 
+  string signature; 
 }; 
 
 struct NewViewMessage {
@@ -46,7 +46,7 @@ struct NewViewMessage {
   uint64_t new_view; 
   map<siteid_t, ViewChangeMessage> view_changes; 
   map<slotid_t, PreprepareMessage> preprepares; 
-  vector<uint8_t> signature; 
+  string signature; 
 }; 
 
 abstract service Pbft {

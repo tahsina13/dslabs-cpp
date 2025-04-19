@@ -51,3 +51,4 @@ profile-results/
 /results
 cmake-build*
 .cache*
+*.pem
