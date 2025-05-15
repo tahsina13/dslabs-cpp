@@ -52,7 +52,11 @@ void CoordinatorPbft::AppendEntries() {
     uint64_t timestamp = chrono::duration_cast<chrono::seconds>(now.time_since_epoch()).count(); 
     uint64_t index, term; 
 
-    bool ok = this->svr_->Start(cmd_, timestamp, loc_id_, &index, &term); //, slot_id_, curr_ballot_);
+    Request req {
+        .timestamp = timestamp,
+        .client_id = loc_id_,
+    }; // TODO: is this used? does this need to be signed? 
+    bool ok = this->svr_->Start(cmd_, req, &index, &term); //, slot_id_, curr_ballot_);
     verify(ok);
 
     // while (this->sch_->commitIndex < index) {

@@ -20,8 +20,7 @@ class PbftCommo : public Communicator {
                  siteid_t site_id, 
                  const PreprepareMessage& mesg,
                  const shared_ptr<Marshallable>& cmd,
-                 uint64_t timestamp,
-                 cliid_t client_id); 
+                 const Request &req); 
 
   void
   SendPrepare(parid_t par_id,

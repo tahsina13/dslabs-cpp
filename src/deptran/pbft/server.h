@@ -9,6 +9,7 @@
 #include "pbft_rpc.h"
 #include "commo.h"
 #include "logstore.h"
+#include "authenticator.h"
 
 namespace janus {
 
@@ -22,12 +23,15 @@ enum RequestState {
   REQ_EXECUTED,
 }; 
 
-struct Request {
-  std::shared_ptr<Marshallable> cmd;
-  uint64_t timestamp; 
-  cliid_t client_id; 
+struct ServerRequest {
+  std::shared_ptr<Marshallable> cmd; 
+  Request req; 
   RequestState state; 
-  // TODO: implement timers 
+  // TODO: implement timers. use alarm.hpp/alarm.cpp?
+
+  ServerRequest(std::shared_ptr<Marshallable> cmd,
+                const Request &req)
+    : cmd(cmd), req(req), state(REQ_INIT) {}
 }; 
 
 class PbftServer : public TxLogServer {
@@ -38,57 +42,29 @@ class PbftServer : public TxLogServer {
   uint64_t target_ckpt_majority_; 
 
   uint64_t current_view_; 
-  siteid_t current_primary_; 
+  svrid_t current_primary_; 
 
   slotid_t low_watermark_; 
   slotid_t high_watermark_; 
   slotid_t last_executed_;
 
-  std::map<slotid_t, Request> requests_; 
-  std::map<std::pair<uint64_t, cliid_t>, std::string> replies_;
+  std::map<slotid_t, ServerRequest> requests_; 
+  std::map<std::pair<uint64_t, cliid_t>, std::map<svrid_t, Reply>> replies_;
   LogStore logstore_; 
 
   bool in_view_change_; 
   
   const EVP_MD *md_; 
-  EVP_MD_CTX *mdctx_; 
-
-  EVP_PKEY_CTX *privkey_ctx_; 
-  std::map<siteid_t, std::shared_ptr<EVP_PKEY_CTX>> pubkey_ctx_; 
+  Authenticator privkey_auth_; 
+  std::map<siteid_t, Authenticator> pubkey_auth_; 
 
   /* Your functions here */
-  std::string GetDigest(const std::shared_ptr<Marshallable> &cmd);
-
-  std::string SignHash(const std::string &hash); 
-  bool VerifyHash(const std::string &hash, const std::string &signature, siteid_t site_id);
-
   PreprepareMessage CreatePreprepare(uint64_t view, slotid_t seqno, const std::string &digest); 
   PrepareMessage CreatePrepare(uint64_t view, slotid_t seqno, const std::string &digest);
   CommitMessage CreateCommit(uint64_t view, slotid_t seqno, const std::string &digest);
   CheckpointMessage CreateCheckpoint(slotid_t ckpt_seqno, const std::string &ckpt_digest);
   ViewChangeMessage CreateViewChange(uint64_t new_view); 
-  NewViewMessage CreateNewView(uint64_t new_view, const std::map<siteid_t, ViewChangeMessage> &view_changes);
-
-  std::string GetPreprepareHash(const PreprepareMessage &mesg);
-  std::string GetPrepareHash(const PrepareMessage &mesg);
-  std::string GetCommitHash(const CommitMessage &mesg);
-  std::string GetCheckpointHash(const CheckpointMessage &mesg);
-  std::string GetViewChangeHash(const ViewChangeMessage &mesg);
-  std::string GetNewViewHash(const NewViewMessage &mesg);
-
-  void SignPreprepare(PreprepareMessage &mesg); 
-  void SignPrepare(PrepareMessage &mesg);
-  void SignCommit(CommitMessage &mesg);
-  void SignCheckpoint(CheckpointMessage &mesg);
-  void SignViewChange(ViewChangeMessage &mesg);
-  void SignNewView(NewViewMessage &mesg);
-
-  bool VerifyPreprepare(const PreprepareMessage &mesg);
-  bool VerifyPrepare(const PrepareMessage &mesg);
-  bool VerifyCommit(const CommitMessage &mesg);
-  bool VerifyCheckpoint(const CheckpointMessage &mesg);
-  bool VerifyViewChange(const ViewChangeMessage &mesg); 
-  bool VerifyNewView(const NewViewMessage &mesg); 
+  NewViewMessage CreateNewView(uint64_t new_view, const std::map<svrid_t, ViewChangeMessage> &view_changes);
   
   void HandlePreprepare(const PreprepareMessage &mesg); 
   void HandlePrepare(const PrepareMessage &mesg); 
@@ -99,8 +75,7 @@ class PbftServer : public TxLogServer {
   
   void OnPreprepare(const PreprepareMessage &mesg, 
                     const std::shared_ptr<Marshallable> &cmd,
-                    uint64_t timestamp,
-                    cliid_t client_id,
+                    const Request &req,
                     const function<void()> &cb);
   void OnPrepare(const PrepareMessage &mesg, const function<void()> &cb);
   void OnCommit(const CommitMessage &mesg, const function<void()> &cb);
@@ -114,9 +89,11 @@ class PbftServer : public TxLogServer {
   PbftServer(Frame *frame) ;
   ~PbftServer() ;
 
-  bool Start(shared_ptr<Marshallable> &cmd, uint64_t timestamp, cliid_t client_id, uint64_t *index, uint64_t *view); 
+  bool Start(const shared_ptr<Marshallable> &cmd, 
+             const Request &req,
+             uint64_t *index, uint64_t *view); 
   void GetState(bool *is_primary, uint64_t *view); 
-  bool GetReply(uint64_t timestamp, cliid_t client_id, string *reply);
+  std::map<svrid_t, Reply> GetReplies(uint64_t timestamp, cliid_t client_id);
 
  private:
   bool disconnected_ = false;

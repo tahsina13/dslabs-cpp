@@ -72,11 +72,12 @@ void PbftLabTest::Cleanup(void) {
 int PbftLabTest::testBasicAgree(void) {
   Init2(1, "Basic agreement");
   Coroutine::Sleep(ELECTIONTIMEOUT); 
+  cliid_t client_id = Config::GetConfig()->GetMyClients()[0].id; 
   for (int i = 1; i <= 3; i++) {
     // make sure no commits exist before any agreements are started
     AssertNoneCommitted(index_);
     // complete 1 agreement and make sure its index is as expected
-    DoAgreeAndAssertIndex((int)(index_ + 100), 0, NSERVERS, index_++);
+    DoAgreeAndAssertIndex((int)(index_ + 100), client_id, NSERVERS, index_++);
   }
   Passed2();
 }

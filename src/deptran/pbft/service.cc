@@ -14,11 +14,10 @@ PbftServiceImpl::PbftServiceImpl(TxLogServer *sched)
 
 void PbftServiceImpl::HandlePreprepare(const PreprepareMessage& mesg,
                                        const MarshallDeputy& md_cmd,
-                                       const uint64_t& timestamp,
-                                       const cliid_t& client_id,
+                                       const Request& req,
                                        rrr::DeferredReply* defer) {
   shared_ptr<Marshallable> cmd = const_cast<MarshallDeputy&>(md_cmd).sp_data_;
-  svr_->OnPreprepare(mesg, cmd, timestamp, client_id, std::bind(&rrr::DeferredReply::reply, defer)); 
+  svr_->OnPreprepare(mesg, cmd, req, std::bind(&rrr::DeferredReply::reply, defer)); 
 }
 
 void PbftServiceImpl::HandlePrepare(const PrepareMessage& mesg,

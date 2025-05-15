@@ -16,21 +16,18 @@ PbftServer::PbftServer(Frame * frame) : current_view_(0),
                                         high_watermark_(MAX_REQUESTS_IN_TRANSIT),
                                         last_executed_(0),
                                         in_view_change_(false),
-                                        md_(EVP_sha3_512()) {
+                                        md_(EVP_sha512()),
+                                        privkey_auth_(md_, frame->site_info_->privkey) {
   frame_ = frame ;
   /* Your code here for server initialization. Note that this function is 
      called in a different OS thread. Be careful about thread safety if 
      you want to initialize variables here. */
 
-  verify((mdctx_ = EVP_MD_CTX_new()) != NULL);
-  verify((privkey_ctx_ = EVP_PKEY_CTX_new(frame_->site_info_->privkey.get(), NULL)) != NULL);
 }
 
 PbftServer::~PbftServer() {
   /* Your code here for server teardown */
 
-  EVP_MD_CTX_free(mdctx_); 
-  EVP_PKEY_CTX_free(privkey_ctx_);
 }
 
 void PbftServer::Setup() {
@@ -48,25 +45,27 @@ void PbftServer::Setup() {
   for (const auto &p : commo()->rpc_par_proxies_[partition_id_]) {
     const auto &pubkey = config->SitePubKeyById(p.first); 
     if (pubkey != nullptr) {
-      EVP_PKEY_CTX *pubkey_ctx = EVP_PKEY_CTX_new(pubkey.get(), NULL);
-      std::shared_ptr<EVP_PKEY_CTX> pubkey_ctx_ptr(pubkey_ctx, [](EVP_PKEY_CTX *p) {
-        EVP_PKEY_CTX_free(p); 
-      });
-      pubkey_ctx_[p.first] = pubkey_ctx_ptr; 
-    } else {
-      pubkey_ctx_[p.first] = nullptr; 
+      pubkey_auth_.emplace(std::piecewise_construct,
+                           std::forward_as_tuple(p.first),
+                           std::forward_as_tuple(md_, pubkey)); 
+    }
+  }
+  for (const auto &p : commo()->rpc_clients_) {
+    const auto &pubkey = config->SitePubKeyById(p.first); 
+    if (pubkey != nullptr) {
+      pubkey_auth_.emplace(std::piecewise_construct,
+                           std::forward_as_tuple(p.first),
+                           std::forward_as_tuple(md_, pubkey)); 
     } 
   }
 }
 
-bool PbftServer::Start(shared_ptr<Marshallable>& cmd, 
-                       uint64_t timestamp, 
-                       cliid_t client_id, 
-                       uint64_t *index, 
-                       uint64_t *view) {
+bool PbftServer::Start(const shared_ptr<Marshallable>& cmd, 
+                       const Request &req,
+                       uint64_t *index, uint64_t *view) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  // TODO: check client signature
-  if (current_primary_ != site_id_) {
+  if (current_primary_ != site_id_ || !pubkey_auth_.count(req.client_id) || 
+      !pubkey_auth_.at(req.client_id).VerifyRequest(cmd, req)) {
     return false; 
   }
 
@@ -77,25 +76,21 @@ bool PbftServer::Start(shared_ptr<Marshallable>& cmd,
   if (seqno > high_watermark_) {
     return false; 
   }
+  requests_.emplace(std::piecewise_construct,
+                    std::forward_as_tuple(seqno),
+                    std::forward_as_tuple(cmd, req));
 
-  std::string digest = GetDigest(cmd); 
+  std::string digest = privkey_auth_.GetDigest(cmd); 
   PreprepareMessage preprepare = CreatePreprepare(current_view_, seqno, digest); 
-  SignPreprepare(preprepare); 
+  privkey_auth_.SignPreprepare(preprepare); 
   if (!logstore_.AddPreprepare(seqno, preprepare)) {
     return false; 
   }
   for (const auto& p : commo()->rpc_par_proxies_[partition_id_]) {
     if (p.first != loc_id_) {
-      commo()->SendPreprepare(partition_id_, p.first, preprepare, cmd, timestamp, client_id); 
+      commo()->SendPreprepare(partition_id_, p.first, preprepare, cmd, req); 
     }
   }
-
-  requests_[seqno] = {
-    .cmd = cmd,
-    .timestamp = timestamp,
-    .client_id = client_id,
-    .state = RequestState::REQ_INIT,
-  }; 
 
   *index = seqno; 
   *view = current_view_; 
@@ -108,79 +103,13 @@ void PbftServer::GetState(bool *is_primary, uint64_t *view) {
   *view = current_view_; 
 }
 
-bool PbftServer::GetReply(uint64_t timestamp, cliid_t client_id, string *reply) {
+std::map<svrid_t, Reply> PbftServer::GetReplies(uint64_t timestamp, cliid_t client_id) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   auto it = replies_.find({timestamp, client_id}); 
   if (it == replies_.end()) {
-    return false; 
+    return {}; 
   }
-  *reply = it->second; 
-  return true; 
-}
-
-std::string PbftServer::GetDigest(const std::shared_ptr<Marshallable> &cmd) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  std::string cmd_str = cmd->ToString(); 
-  unsigned char *raw_digest; 
-  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
-    Log_fatal("EVP_DigestInit_ex failed");
-  }
-  if (EVP_DigestUpdate(mdctx_, cmd_str.data(), cmd_str.size()) != 1) {
-    Log_fatal("EVP_DigestUpdate failed");
-  }
-  if ((raw_digest= (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_DigestFinal_ex(mdctx_, raw_digest, NULL) != 1) {
-    Log_fatal("EVP_DigestFinal_ex failed");
-  }
-  std::string digest (raw_digest, raw_digest + EVP_MD_size(md_)); 
-  OPENSSL_free(raw_digest);
-  return digest; 
-}
-
-std::string PbftServer::SignHash(const std::string &hash) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  size_t siglen; 
-  unsigned char *raw_sig; 
-  if (EVP_PKEY_sign_init(privkey_ctx_) != 1) {
-    Log_fatal("EVP_PKEY_sign_init failed");
-  }
-  if (EVP_PKEY_CTX_set_rsa_padding(privkey_ctx_, RSA_PKCS1_PADDING) != 1) {
-    Log_fatal("EVP_PKEY_CTX_set_rsa_padding failed");
-  }
-  if (EVP_PKEY_sign(privkey_ctx_, NULL, &siglen, 
-                    (const unsigned char *)hash.data(), hash.size()) != 1) {
-    Log_fatal("EVP_PKEY_sign failed");
-  }
-  if ((raw_sig = (unsigned char *)OPENSSL_malloc(siglen)) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_PKEY_sign(privkey_ctx_, raw_sig, &siglen, 
-                    (const unsigned char *)hash.data(), hash.size()) != 1) {
-    Log_fatal("EVP_PKEY_sign failed");
-  }
-  std::string signature (raw_sig, raw_sig + siglen);
-  OPENSSL_free(raw_sig); 
-  return signature; 
-}
-
-bool PbftServer::VerifyHash(const std::string &hash, const std::string &signature, siteid_t site_id) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  verify(pubkey_ctx_.count(site_id) > 0); 
-  EVP_PKEY_CTX *pubkey_ctx = pubkey_ctx_.at(site_id).get(); 
-  if (pubkey_ctx == nullptr) {
-    return false; 
-  }
-  if (EVP_PKEY_verify_init(pubkey_ctx) != 1) {
-    Log_fatal("EVP_PKEY_verify_init failed");
-  }
-  if (EVP_PKEY_CTX_set_rsa_padding(pubkey_ctx, RSA_PKCS1_PADDING) != 1) {
-    Log_fatal("EVP_PKEY_CTX_set_rsa_padding failed");
-  }
-  int ret = EVP_PKEY_verify(pubkey_ctx, (const unsigned char *)signature.data(), signature.size(), 
-                            (const unsigned char *)hash.data(), hash.size());
-  return ret == 1; 
+  return it->second; 
 }
 
 PreprepareMessage PbftServer::CreatePreprepare(uint64_t view, slotid_t seqno, const std::string &digest) {
@@ -220,16 +149,16 @@ CheckpointMessage PbftServer::CreateCheckpoint(slotid_t ckpt_seqno, const std::s
 
 ViewChangeMessage PbftServer::CreateViewChange(uint64_t new_view) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  std::map<siteid_t, CheckpointMessage> checkpoints; 
+  std::map<svrid_t, CheckpointMessage> checkpoints; 
   if (logstore_.GetCheckpointCount(low_watermark_) > 0) {
     checkpoints = logstore_.GetCheckpoints(low_watermark_);  
   }
   std::map<slotid_t, PreprepareMessage> preprepares; 
-  std::map<slotid_t, std::map<siteid_t, PrepareMessage>> prepares; 
+  std::map<slotid_t, std::map<svrid_t, PrepareMessage>> prepares; 
   for (const auto &request_entry : requests_) {
     const slotid_t slot = request_entry.first; 
-    const Request &req = request_entry.second;  
-    if (req.state >= RequestState::REQ_PREPARED) {
+    const ServerRequest &svr_req = request_entry.second;  
+    if (svr_req.state >= RequestState::REQ_PREPARED) {
       preprepares[slot] = logstore_.GetPreprepare(slot);  
       prepares[slot] = logstore_.GetPrepares(slot); 
     }
@@ -244,7 +173,7 @@ ViewChangeMessage PbftServer::CreateViewChange(uint64_t new_view) {
   }; 
 }
 
-NewViewMessage PbftServer::CreateNewView(uint64_t new_view, const std::map<siteid_t, ViewChangeMessage> &view_changes) {
+NewViewMessage PbftServer::CreateNewView(uint64_t new_view, const std::map<svrid_t, ViewChangeMessage> &view_changes) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   slotid_t min_s = std::numeric_limits<slotid_t>::max(), max_s = 0;
   std::map<slotid_t, PreprepareMessage> preprepares; 
@@ -282,263 +211,12 @@ NewViewMessage PbftServer::CreateNewView(uint64_t new_view, const std::map<sitei
   };
 }
 
-std::string PbftServer::GetPreprepareHash(const PreprepareMessage &mesg) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  unsigned char *raw_hash; 
-  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
-    Log_fatal("EVP_DigestInit_ex failed");
-  }
-  if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.view, sizeof(mesg.view)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.seqno, sizeof(mesg.seqno)) != 1) {
-    Log_fatal("EVP_DigestUpdate failed");
-  }
-  if ((raw_hash = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
-    Log_fatal("EVP_DigestFinal_ex failed");
-  }
-  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_)); 
-  OPENSSL_free(raw_hash);
-  return hash; 
-}
-
-std::string PbftServer::GetPrepareHash(const PrepareMessage &mesg) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  unsigned char *raw_hash; 
-  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
-    Log_fatal("EVP_DigestInit_ex failed");
-  }
-  if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.view, sizeof(mesg.view)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.seqno, sizeof(mesg.seqno)) != 1 ||
-      EVP_DigestUpdate(mdctx_, mesg.digest.data(), mesg.digest.size()) != 1) {
-    Log_fatal("EVP_DigestUpdate failed");
-  }
-  if ((raw_hash = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
-    Log_fatal("EVP_DigestFinal_ex failed");
-  }
-  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
-  OPENSSL_free(raw_hash);
-  return hash; 
-}
-
-std::string PbftServer::GetCommitHash(const CommitMessage &mesg) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  unsigned char *raw_hash; 
-  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
-    Log_fatal("EVP_DigestInit_ex failed");
-  }
-  if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.view, sizeof(mesg.view)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.seqno, sizeof(mesg.seqno)) != 1 ||
-      EVP_DigestUpdate(mdctx_, mesg.digest.data(), mesg.digest.size()) != 1) {
-    Log_fatal("EVP_DigestUpdate failed");
-  }
-  if ((raw_hash = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
-    Log_fatal("EVP_DigestFinal_ex failed");
-  }
-  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
-  OPENSSL_free(raw_hash);
-  return hash; 
-}
-
-std::string PbftServer::GetCheckpointHash(const CheckpointMessage &mesg) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  unsigned char *raw_hash; 
-  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
-    Log_fatal("EVP_DigestInit_ex failed");
-  }
-  if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.ckpt_seqno, sizeof(mesg.ckpt_seqno)) != 1 ||
-      EVP_DigestUpdate(mdctx_, mesg.ckpt_digest.data(), mesg.ckpt_digest.size()) != 1) {
-    Log_fatal("EVP_DigestUpdate failed");
-  }
-  if ((raw_hash = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
-    Log_fatal("EVP_DigestFinal_ex failed");
-  }
-  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
-  OPENSSL_free(raw_hash);
-  return hash; 
-}
-
-std::string PbftServer::GetViewChangeHash(const ViewChangeMessage &mesg) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  unsigned char *raw_hash; 
-  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
-    Log_fatal("EVP_DigestInit_ex failed");
-  } 
-  if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.new_view, sizeof(mesg.new_view)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.ckpt_seqno, sizeof(mesg.ckpt_seqno)) != 1) {
-    Log_fatal("EVP_DigestUpdate failed");
-  }
-  for (const auto &ckpt_entry : mesg.checkpoints) {
-    const CheckpointMessage &ckpt = ckpt_entry.second; 
-    if (EVP_DigestUpdate(mdctx_, ckpt.ckpt_digest.data(), ckpt.ckpt_digest.size()) != 1) {
-      Log_fatal("EVP_DigestUpdate failed");
-    } 
-  }
-  for (const auto &preprepare_entry : mesg.preprepares) {
-    const PreprepareMessage &preprepare = preprepare_entry.second; 
-    if (EVP_DigestUpdate(mdctx_, preprepare.digest.data(), preprepare.digest.size()) != 1) {
-      Log_fatal("EVP_DigestUpdate failed");
-    } 
-  }
-  for (const auto &prepare_map : mesg.prepares) {
-    for (const auto &prepare_entry : prepare_map.second) {
-      const PrepareMessage &prepare = prepare_entry.second; 
-      if (EVP_DigestUpdate(mdctx_, prepare.digest.data(), prepare.digest.size()) != 1) {
-        Log_fatal("EVP_DigestUpdate failed");
-      } 
-    }
-  }
-  if ((raw_hash = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
-    Log_fatal("EVP_DigestFinal_ex failed");
-  }
-  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
-  OPENSSL_free(raw_hash);
-  return hash; 
-}
-
-std::string PbftServer::GetNewViewHash(const NewViewMessage &mesg) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  unsigned char *raw_hash; 
-  if (EVP_DigestInit_ex(mdctx_, md_, NULL) != 1) {
-    Log_fatal("EVP_DigestInit_ex failed");
-  } 
-  if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.new_view, sizeof(mesg.new_view)) != 1) {
-    Log_fatal("EVP_DigestUpdate failed");
-  }
-  for (const auto &view_change_entry : mesg.view_changes) {
-    const ViewChangeMessage &view_change = view_change_entry.second; 
-    if (EVP_DigestUpdate(mdctx_, view_change.signature.data(), view_change.signature.size()) != 1) {
-      Log_fatal("EVP_DigestUpdate failed");
-    } 
-  }
-  for (const auto &preprepare_entry : mesg.preprepares) {
-    const PreprepareMessage &preprepare = preprepare_entry.second; 
-    if (EVP_DigestUpdate(mdctx_, preprepare.digest.data(), preprepare.digest.size()) != 1) {
-      Log_fatal("EVP_DigestUpdate failed");
-    } 
-  }
-  if ((raw_hash = (unsigned char *)OPENSSL_malloc(EVP_MD_size(md_))) == NULL) {
-    Log_fatal("OPENSSL_malloc failed");
-  }
-  if (EVP_DigestFinal_ex(mdctx_, raw_hash, NULL) != 1) {
-    Log_fatal("EVP_DigestFinal_ex failed");
-  }
-  std::string hash (raw_hash, raw_hash + EVP_MD_size(md_));
-  OPENSSL_free(raw_hash);
-  return hash; 
-}
-
-void PbftServer::SignPreprepare(PreprepareMessage &mesg) {
-  std::string hash = GetPreprepareHash(mesg); 
-  mesg.signature = SignHash(hash);
-}
-
-void PbftServer::SignPrepare(PrepareMessage &mesg) {
-  std::string hash = GetPrepareHash(mesg); 
-  mesg.signature = SignHash(hash);
-}
-
-void PbftServer::SignCommit(CommitMessage &mesg) {
-  std::string hash = GetCommitHash(mesg); 
-  mesg.signature = SignHash(hash);
-}
-
-void PbftServer::SignCheckpoint(CheckpointMessage &mesg) {
-  std::string hash = GetCheckpointHash(mesg); 
-  mesg.signature = SignHash(hash);
-}
-
-void PbftServer::SignViewChange(ViewChangeMessage &mesg) {
-  std::string hash = GetViewChangeHash(mesg); 
-  mesg.signature = SignHash(hash);
-}
-
-void PbftServer::SignNewView(NewViewMessage &mesg) {
-  std::string hash = GetNewViewHash(mesg); 
-  mesg.signature = SignHash(hash);
-}
-
-bool PbftServer::VerifyPreprepare(const PreprepareMessage &mesg) {
-  std::string hash = GetPreprepareHash(mesg); 
-  return VerifyHash(hash, mesg.signature, mesg.server_id); 
-}
-
-bool PbftServer::VerifyPrepare(const PrepareMessage &mesg) {
-  std::string hash = GetPrepareHash(mesg); 
-  return VerifyHash(hash, mesg.signature, mesg.server_id); 
-}
-
-bool PbftServer::VerifyCommit(const CommitMessage &mesg) {
-  std::string hash = GetCommitHash(mesg); 
-  return VerifyHash(hash, mesg.signature, mesg.server_id); 
-}
-
-bool PbftServer::VerifyCheckpoint(const CheckpointMessage &mesg) {
-  std::string hash = GetCheckpointHash(mesg); 
-  return VerifyHash(hash, mesg.signature, mesg.server_id); 
-}
-
-bool PbftServer::VerifyViewChange(const ViewChangeMessage &mesg) {
-  for (const auto &ckpt_entry : mesg.checkpoints) {
-    const CheckpointMessage &ckpt = ckpt_entry.second;
-    if (!VerifyCheckpoint(ckpt)) {
-      return false; 
-    }
-  }
-  for (const auto &preprepare_entry : mesg.preprepares) {
-    const PreprepareMessage &preprepare = preprepare_entry.second;
-    if (!VerifyPreprepare(preprepare)) {
-      return false; 
-    }
-  }
-  for (const auto &prepare_map : mesg.prepares) {
-    for (const auto &prepare_entry : prepare_map.second) {
-      const PrepareMessage &prepare = prepare_entry.second;
-      if (!VerifyPrepare(prepare)) {
-        return false; 
-      }
-    }
-  }
-  std::string hash = GetViewChangeHash(mesg);
-  return VerifyHash(hash, mesg.signature, mesg.server_id);
-}
-
-bool PbftServer::VerifyNewView(const NewViewMessage &mesg) {
-  for (const auto &view_change_entry : mesg.view_changes) {
-    const ViewChangeMessage &view_change = view_change_entry.second; 
-    if (!VerifyViewChange(view_change)) {
-      return false; 
-    }
-  }
-  std::string hash = GetNewViewHash(mesg); 
-  return VerifyHash(hash, mesg.signature, mesg.server_id); 
-}
-
 void PbftServer::HandlePreprepare(const PreprepareMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   // Assumes preprepare message is valid and correct
   logstore_.AddPreprepare(mesg.seqno, mesg);  
   PrepareMessage prepare = CreatePrepare(current_view_, mesg.seqno, mesg.digest); 
-  SignPrepare(prepare);
+  privkey_auth_.SignPrepare(prepare);
   for (const auto& p : commo()->rpc_par_proxies_[partition_id_]) {
     if (p.first != site_id_) {
       commo()->SendPrepare(partition_id_, p.first, prepare); 
@@ -553,10 +231,10 @@ void PbftServer::HandlePrepare(const PrepareMessage &mesg) {
   logstore_.AddPrepare(mesg.seqno, mesg.server_id, mesg); 
   bool has_majority = logstore_.GetPrepareCount(mesg.seqno) >= target_majority_;
   if (has_majority) {
-    Request &req = requests_.at(mesg.seqno); 
-    req.state = RequestState::REQ_PREPARED; 
+    ServerRequest &svr_req = requests_.at(mesg.seqno); 
+    svr_req.state = RequestState::REQ_PREPARED; 
     CommitMessage commit = CreateCommit(current_view_, mesg.seqno, mesg.digest); 
-    SignCommit(commit); 
+    privkey_auth_.SignCommit(commit); 
     for (auto p : commo()->rpc_par_proxies_[partition_id_]) {
       if (p.first != site_id_) {
         commo()->SendCommit(partition_id_, p.first, commit); 
@@ -572,16 +250,28 @@ void PbftServer::HandleCommit(const CommitMessage &mesg) {
   logstore_.AddCommit(mesg.seqno, mesg.server_id, mesg); 
   bool has_majority = logstore_.GetCommitCount(mesg.seqno) >= target_majority_;
   if (has_majority) {
-    Request &req = requests_.at(mesg.seqno);
-    req.state = RequestState::REQ_COMMITTED; 
+    ServerRequest &svr_req = requests_.at(mesg.seqno);
+    svr_req.state = RequestState::REQ_COMMITTED; 
     while (requests_.count(last_executed_ + 1)) {
-      req = requests_.at(last_executed_ + 1); 
-      if (req.state == RequestState::REQ_COMMITTED) {
-        replies_[std::make_pair(req.timestamp, req.client_id)] = app_next_(*req.cmd);
-        req.state = RequestState::REQ_EXECUTED; 
+      svr_req = requests_.at(last_executed_ + 1); 
+      if (svr_req.state == RequestState::REQ_COMMITTED) {
+        Reply rep {
+          .view = current_view_,
+          .timestamp = svr_req.req.timestamp,
+          .client_id = svr_req.req.client_id,
+          .server_id = site_id_,
+          .reply = app_next_(*svr_req.cmd),
+        }; 
+        privkey_auth_.SignReply(rep); 
+        if (replies_.count({svr_req.req.timestamp, svr_req.req.client_id}) == 0) {
+          replies_.insert({{svr_req.req.timestamp, svr_req.req.client_id}, {}});
+        }
+        replies_.at({svr_req.req.timestamp, svr_req.req.client_id}).emplace(
+          site_id_, rep); 
+        svr_req.state = RequestState::REQ_EXECUTED; 
         last_executed_++; 
         break;
-      } else if (req.state == RequestState::REQ_EXECUTED) {
+      } else if (svr_req.state == RequestState::REQ_EXECUTED) {
         last_executed_++; 
       } else {
         break; 
@@ -657,11 +347,11 @@ void PbftServer::HandleNewView(const NewViewMessage &mesg) {
 
 void PbftServer::OnPreprepare(const PreprepareMessage &mesg, 
                               const std::shared_ptr<Marshallable> &cmd,
-                              uint64_t timestamp,
-                              cliid_t client_id,
+                              const Request &req,
                               const function<void()> &cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  if (in_view_change_ || !VerifyPreprepare(mesg)) {
+  Authenticator &auth = pubkey_auth_.at(mesg.server_id); 
+  if (in_view_change_ || !auth.VerifyPreprepare(mesg)) {
     return; 
   }
 
@@ -672,24 +362,24 @@ void PbftServer::OnPreprepare(const PreprepareMessage &mesg,
   bool is_from_primary = mesg.server_id == current_primary_;
   bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
-  bool is_digest_valid = mesg.digest == GetDigest(cmd); 
+  bool is_digest_valid = mesg.digest == privkey_auth_.GetDigest(cmd); 
   if (!is_from_primary || !is_same_view || !is_seqno_valid || !is_digest_valid) {
     return; 
   }
 
-  HandlePreprepare(mesg); 
-  requests_[mesg.seqno] = {
-    .cmd = cmd,
-    .timestamp = timestamp,
-    .client_id = client_id,
-    .state = RequestState::REQ_INIT,
-  }; 
+  if (auth.VerifyRequest(cmd, req)) {
+    requests_.emplace(std::piecewise_construct,
+                      std::forward_as_tuple(mesg.seqno),
+                      std::forward_as_tuple(cmd, req));
+    HandlePreprepare(mesg); 
+  }
   cb(); 
 }
 
 void PbftServer::OnPrepare(const PrepareMessage &mesg, const function<void()> &cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  if (in_view_change_ || !VerifyPrepare(mesg)) {
+  Authenticator &auth = pubkey_auth_.at(mesg.server_id);
+  if (in_view_change_ || !auth.VerifyPrepare(mesg)) {
     return; 
   }
 
@@ -697,7 +387,7 @@ void PbftServer::OnPrepare(const PrepareMessage &mesg, const function<void()> &c
     return; 
   }
   const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.seqno);
-  const Request &req = requests_.at(mesg.seqno);
+  const ServerRequest &svr_req = requests_.at(mesg.seqno);
 
   bool is_from_primary = mesg.server_id == current_primary_; 
   bool is_same_view = mesg.view == current_view_; 
@@ -706,18 +396,17 @@ void PbftServer::OnPrepare(const PrepareMessage &mesg, const function<void()> &c
   bool is_matches = preprepare.view == mesg.view && 
                     preprepare.seqno == mesg.seqno && 
                     preprepare.digest == mesg.digest;
-  bool is_req_init = req.state == RequestState::REQ_INIT;
-  if (is_from_primary || !is_same_view || !is_seqno_valid || !is_digest_valid || !is_matches || !is_req_init) {
-    return; 
+  bool is_req_init = svr_req.state == RequestState::REQ_INIT;
+  if (!is_from_primary && is_same_view && is_seqno_valid && is_digest_valid && is_matches && is_req_init) {
+    HandlePrepare(mesg); 
   }
-
-  HandlePrepare(mesg); 
   cb(); 
 }
 
 void PbftServer::OnCommit(const CommitMessage &mesg, const function<void()> &cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  if (in_view_change_ || !VerifyCommit(mesg)) {
+  Authenticator &auth = pubkey_auth_.at(mesg.server_id);
+  if (in_view_change_ || !auth.VerifyCommit(mesg)) {
     return; 
   }
 
@@ -725,7 +414,7 @@ void PbftServer::OnCommit(const CommitMessage &mesg, const function<void()> &cb)
     return; 
   }
   const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.seqno);
-  const Request &req = requests_.at(mesg.seqno);
+  const ServerRequest &svr_req = requests_.at(mesg.seqno);
 
   bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
@@ -733,39 +422,37 @@ void PbftServer::OnCommit(const CommitMessage &mesg, const function<void()> &cb)
   bool is_matches = preprepare.view == mesg.view && 
                     preprepare.seqno == mesg.seqno && 
                     preprepare.digest == mesg.digest;
-  bool is_req_prepared = req.state == RequestState::REQ_PREPARED;
-  if (in_view_change_ || !is_same_view || !is_seqno_valid || !is_digest_valid || !is_matches || !is_req_prepared) {
-    return; 
+  bool is_req_prepared = svr_req.state == RequestState::REQ_PREPARED;
+  if (!in_view_change_ && is_same_view && is_seqno_valid && is_digest_valid && is_matches && is_req_prepared) {
+    HandleCommit(mesg);
   }
-
-  HandleCommit(mesg);
   cb(); 
 }
 
 void PbftServer::OnCheckpoint(const CheckpointMessage &mesg, const function<void()> &cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  if (!VerifyCheckpoint(mesg)) {
-    return; 
+  Authenticator &auth = pubkey_auth_.at(mesg.server_id);
+  if (auth.VerifyCheckpoint(mesg)) {
+    HandleCheckpoint(mesg);
   }
-  HandleCheckpoint(mesg);
   cb();  
 }
 
 void PbftServer::OnViewChange(const ViewChangeMessage &mesg, const function<void()> &cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  if (!VerifyViewChange(mesg)) {
-    return; 
+  Authenticator &auth = pubkey_auth_.at(mesg.server_id);
+  if (auth.VerifyViewChange(mesg)) {
+    HandleViewChange(mesg); 
   }
-  HandleViewChange(mesg); 
   cb(); 
 }
 
 void PbftServer::OnNewView(const NewViewMessage &mesg, const function<void()> &cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  if (!VerifyNewView(mesg)) {
-    return; 
+  Authenticator &auth = pubkey_auth_.at(mesg.server_id);
+  if (auth.VerifyNewView(mesg)) {
+    HandleNewView(mesg); 
   }
-  HandleNewView(mesg); 
   cb(); 
 }
 
@@ -775,7 +462,7 @@ void PbftServer::Disconnect(const bool disconnect) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(disconnected_ != disconnect);
   // global map of rpc_par_proxies_ values accessed by partition then by site
-  static map<parid_t, map<siteid_t, map<siteid_t, vector<SiteProxyPair>>>> _proxies{};
+  static map<parid_t, map<svrid_t, map<svrid_t, vector<SiteProxyPair>>>> _proxies{};
   if (_proxies.find(partition_id_) == _proxies.end()) {
     _proxies[partition_id_] = {};
   }

@@ -767,9 +767,9 @@ void Config::LoadKeysYML(YAML::Node config) {
         std::shared_ptr<EVP_PKEY> pubkey_ptr(pubkey, [](EVP_PKEY *p) {
           EVP_PKEY_free(p); 
         });
-        site_pubkey_map_[site->id] = pubkey_ptr; 
         fclose(priv_fp); 
         fclose(pub_fp); 
+        site_pubkey_map_[site->id] = pubkey_ptr; 
       }
     }
   }

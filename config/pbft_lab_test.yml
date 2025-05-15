@@ -8,7 +8,7 @@ mode:
   retry: 20
   ongoing: 1 # per client
 
-# Sites: 1 server, 4 replicas
+# Sites: 1 server, 4 replicas, 2 clients
 
 site:
   server:

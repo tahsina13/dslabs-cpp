@@ -1,7 +1,22 @@
 namespace janus;
 
+struct Request {
+  uint64_t timestamp; 
+  cliid_t client_id; 
+  string signature; 
+}; 
+
+struct Reply {
+  uint64_t view; 
+  uint64_t timestamp; 
+  cliid_t client_id; 
+  svrid_t server_id; 
+  string reply; 
+  string signature; 
+}; 
+
 struct PreprepareMessage {
-  siteid_t server_id; 
+  svrid_t server_id; 
   uint64_t view;
   slotid_t seqno;
   string digest; 
@@ -9,7 +24,7 @@ struct PreprepareMessage {
 }; 
 
 struct PrepareMessage {
-  siteid_t server_id; 
+  svrid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
   string digest; 
@@ -17,7 +32,7 @@ struct PrepareMessage {
 };
 
 struct CommitMessage {
-  siteid_t server_id; 
+  svrid_t server_id; 
   uint64_t view; 
   slotid_t seqno; 
   string digest; 
@@ -25,35 +40,34 @@ struct CommitMessage {
 }; 
 
 struct CheckpointMessage {
-  siteid_t server_id;
+  svrid_t server_id;
   slotid_t ckpt_seqno;   
   string ckpt_digest; 
   string signature; 
 }; 
 
 struct ViewChangeMessage {
-  siteid_t server_id; 
+  svrid_t server_id; 
   uint64_t new_view; 
   slotid_t ckpt_seqno; 
-  map<siteid_t, CheckpointMessage> checkpoints; 
+  map<svrid_t, CheckpointMessage> checkpoints; 
   map<slotid_t, PreprepareMessage> preprepares; 
-  map<slotid_t, map<siteid_t, PrepareMessage>> prepares; 
+  map<slotid_t, map<svrid_t, PrepareMessage>> prepares; 
   string signature; 
 }; 
 
 struct NewViewMessage {
-  siteid_t server_id; 
+  svrid_t server_id; 
   uint64_t new_view; 
-  map<siteid_t, ViewChangeMessage> view_changes; 
+  map<svrid_t, ViewChangeMessage> view_changes; 
   map<slotid_t, PreprepareMessage> preprepares; 
   string signature; 
 }; 
 
 abstract service Pbft {
   defer Preprepare(PreprepareMessage mesg, 
-                   MarshallDeputy md_cmd, 
-                   uint64_t timestamp, 
-                   cliid_t client_id); 
+                   MarshallDeputy md_cmd,
+                   Request req); 
   defer Prepare(PrepareMessage mesg); 
   defer Commit(CommitMessage mesg); 
 

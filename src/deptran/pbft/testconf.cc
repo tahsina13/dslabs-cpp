@@ -12,7 +12,7 @@ std::function<std::string(Marshallable &)> PbftTestConfig::commit_callbacks[NSER
 std::vector<int> PbftTestConfig::committed_cmds[NSERVERS];
 uint64_t PbftTestConfig::rpc_count_last[NSERVERS];
 
-PbftTestConfig::PbftTestConfig(PbftFrame **replicas) {
+PbftTestConfig::PbftTestConfig(PbftFrame **replicas) : md_(EVP_sha512()) {
   verify(PbftTestConfig::replicas == nullptr);
   PbftTestConfig::replicas = replicas;
   for (int i = 0; i < NSERVERS; i++) {
@@ -20,6 +20,13 @@ PbftTestConfig::PbftTestConfig(PbftFrame **replicas) {
     PbftTestConfig::committed_cmds[i].push_back(-1);
     PbftTestConfig::rpc_count_last[i] = 0;
     disconnected_[i] = false;
+  }
+  for (const auto &p : Config::GetConfig()->GetMyClients()) {
+    if (p.privkey != nullptr) {
+      privkey_auth_.emplace(std::piecewise_construct,
+                            std::forward_as_tuple(p.id),
+                            std::forward_as_tuple(md_, p.privkey));
+    }
   }
   th_ = std::thread([this](){ netctlLoop(); });
 }
@@ -92,7 +99,12 @@ bool PbftTestConfig::Start(int svr, int cmd, cliid_t client_id, uint64_t *index,
   uint64_t timestamp = chrono::duration_cast<chrono::seconds>(now.time_since_epoch()).count(); 
   // call Start()
   Log_debug("Starting agreement on svr %d for cmd id %d", svr, cmdptr->tx_id_);
-  return PbftTestConfig::replicas[svr]->svr_->Start(cmdptr_m, timestamp, client_id, index, view);
+  Request req {
+    .timestamp = timestamp,
+    .client_id = client_id,
+  };
+  privkey_auth_.at(client_id).SignRequest(cmdptr_m, req); 
+  return PbftTestConfig::replicas[svr]->svr_->Start(cmdptr_m, req, index, view);
 }
 
 int PbftTestConfig::Wait(uint64_t index, int n, uint64_t view) {

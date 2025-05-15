@@ -19,8 +19,7 @@ PbftCommo::SendPreprepare(parid_t par_id,
                           siteid_t site_id,
                           const PreprepareMessage& mesg,
                           const shared_ptr<Marshallable>& cmd,
-                          uint64_t timestamp,
-                          cliid_t client_id) {
+                          const Request &req) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     if (p.first == site_id) {
@@ -30,7 +29,7 @@ PbftCommo::SendPreprepare(parid_t par_id,
         /* do nothing */
       };
       MarshallDeputy md_cmd (cmd); 
-      Call_Async(proxy, Preprepare, mesg, md_cmd, timestamp, client_id, fuattr);
+      Call_Async(proxy, Preprepare, mesg, md_cmd, req, fuattr);
     }
   }
 }

@@ -21,11 +21,10 @@ class PbftServiceImpl : public PbftService {
   PbftServer* svr_;
   PbftServiceImpl(TxLogServer* sched);
 
-  RpcHandler(Preprepare, 4, 
+  RpcHandler(Preprepare, 3, 
             const PreprepareMessage&, mesg,
             const MarshallDeputy&, md_cmd,
-            const uint64_t&, timestamp,
-            const cliid_t&, client_id) { }
+            const Request&, req) { }
   RpcHandler(Prepare, 1, const PrepareMessage&, mesg) { }
   RpcHandler(Commit, 1, const CommitMessage&, mesg) { }
 

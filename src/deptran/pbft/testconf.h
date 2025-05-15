@@ -1,7 +1,10 @@
 #pragma once
 
+#include <openssl/evp.h>
+
 #include "frame.h"
 #include "coordinator.h"
+#include "authenticator.h"
 
 namespace janus {
 
@@ -53,6 +56,9 @@ class PbftTestConfig {
   bool disconnected_[NSERVERS];
   // guards disconnected_ between Disconnect()/Reconnect() and netctlLoop
   std::mutex disconnect_mtx_;
+
+  const EVP_MD *md_; 
+  std::map<cliid_t, Authenticator> privkey_auth_; 
 
  public:
   PbftTestConfig(PbftFrame **replicas);
