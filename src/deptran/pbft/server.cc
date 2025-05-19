@@ -60,7 +60,7 @@ void PbftServer::Setup() {
   }
 #ifdef PBFT_TEST_CORO
   pubkey_auth_.emplace(std::piecewise_construct,
-                       std::forward_as_tuple(static_cast<svrid_t>(-1)),
+                       std::forward_as_tuple(static_cast<siteid_t>(-1)),
                        std::forward_as_tuple(md_, static_cast<PbftFrame*>(frame_)->pubkey_)); 
 #endif
 }
@@ -108,13 +108,14 @@ void PbftServer::GetState(bool *is_primary, uint64_t *view) {
   *view = current_view_; 
 }
 
-std::map<svrid_t, Reply> PbftServer::GetReplies(uint64_t timestamp, cliid_t client_id) {
+bool PbftServer::GetReply(uint64_t timestamp, cliid_t client_id, Reply *rep) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   auto it = replies_.find({timestamp, client_id}); 
   if (it == replies_.end()) {
-    return {}; 
+    return false; 
   }
-  return it->second; 
+  *rep = it->second; 
+  return true; 
 }
 
 PreprepareMessage PbftServer::CreatePreprepare(uint64_t view, slotid_t seqno, const std::string &digest) {
@@ -268,11 +269,9 @@ void PbftServer::HandleCommit(const CommitMessage &mesg) {
           .reply = app_next_(*svr_req.cmd),
         }; 
         privkey_auth_.SignReply(rep); 
-        if (replies_.count({svr_req.req.timestamp, svr_req.req.client_id}) == 0) {
-          replies_.insert({{svr_req.req.timestamp, svr_req.req.client_id}, {}});
-        }
-        replies_.at({svr_req.req.timestamp, svr_req.req.client_id}).emplace(
-          site_id_, rep); 
+        replies_.emplace(std::piecewise_construct,
+                          std::forward_as_tuple(rep.timestamp, svr_req.req.client_id),
+                          std::forward_as_tuple(rep));
         svr_req.state = RequestState::REQ_EXECUTED; 
         last_executed_++; 
         break;

@@ -16,11 +16,19 @@ PbftTestConfig::PbftTestConfig(PbftFrame **replicas) : md_(EVP_sha512()),
                                                        privkey_auth_(md_, PbftFrame::privkey_) {
   verify(PbftTestConfig::replicas == nullptr);
   PbftTestConfig::replicas = replicas;
+  Config *config = Config::GetConfig(); 
   for (int i = 0; i < NSERVERS; i++) {
     PbftTestConfig::replicas[i]->svr_->rep_frame_ = PbftTestConfig::replicas[i]->svr_->frame_;
     PbftTestConfig::committed_cmds[i].push_back(-1);
     PbftTestConfig::rpc_count_last[i] = 0;
     disconnected_[i] = false;
+    int site_id = PbftTestConfig::replicas[i]->svr_->site_id_;
+    auto pubkey = config->SitePubKeyById(site_id);
+    if (pubkey != nullptr) {
+      pubkey_auth_.emplace(std::piecewise_construct,
+                           std::forward_as_tuple(site_id),
+                           std::forward_as_tuple(md_, pubkey));
+    }
   }
   th_ = std::thread([this](){ netctlLoop(); });
 }
@@ -65,17 +73,27 @@ uint64_t PbftTestConfig::OneView(void) {
 
 int PbftTestConfig::NCommitted(uint64_t index) {
   int cmd, n = 0;
+  Reply rep; 
   for (int i = 0; i < NSERVERS; i++) {
     if (PbftTestConfig::committed_cmds[i].size() > index) {
       auto curcmd = PbftTestConfig::committed_cmds[i][index];
+      auto &curreq = requests_.at(curcmd); 
+      Reply currep; 
+      if (!PbftTestConfig::replicas[i]->svr_->GetReply(curreq.timestamp, curreq.client_id, &currep)) {
+        continue; // server has not committed yet
+      }
       if (n == 0) {
         cmd = curcmd;
+        rep = currep; 
       } else {
-        if (curcmd != cmd) {
+        if (curcmd != cmd || currep.reply != rep.reply) {
           return -1;
         }
       }
-      n++;
+      auto &auth = pubkey_auth_.at(i); 
+      if (auth.VerifyReply(currep)) {
+        n++; 
+      }
     }
   }
   return n;
@@ -98,6 +116,7 @@ bool PbftTestConfig::Start(int svr, int cmd, uint64_t *index, uint64_t *view) {
     .client_id = static_cast<cliid_t>(-1),
   };
   privkey_auth_.SignRequest(cmdptr_m, req); 
+  requests_.emplace(cmd, req); 
   return PbftTestConfig::replicas[svr]->svr_->Start(cmdptr_m, req, index, view);
 }
 

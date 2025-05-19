@@ -49,7 +49,7 @@ class PbftServer : public TxLogServer {
   slotid_t last_executed_;
 
   std::map<slotid_t, ServerRequest> requests_; 
-  std::map<std::pair<uint64_t, cliid_t>, std::map<svrid_t, Reply>> replies_;
+  std::map<std::pair<uint64_t, cliid_t>, Reply> replies_;
   LogStore logstore_; 
 
   bool in_view_change_; 
@@ -93,7 +93,7 @@ class PbftServer : public TxLogServer {
              const Request &req,
              uint64_t *index, uint64_t *view); 
   void GetState(bool *is_primary, uint64_t *view); 
-  std::map<svrid_t, Reply> GetReplies(uint64_t timestamp, cliid_t client_id);
+  bool GetReply(uint64_t timestamp, cliid_t client_id, Reply *rep);
 
  private:
   bool disconnected_ = false;

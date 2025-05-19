@@ -76,7 +76,7 @@ int PbftLabTest::testBasicAgree(void) {
     // make sure no commits exist before any agreements are started
     AssertNoneCommitted(index_);
     // complete 1 agreement and make sure its index is as expected
-    DoAgreeAndAssertIndex((int)(index_ + 100), NSERVERS, index_++);
+    DoAgreeAndAssertIndex((int)(index_ + 100), NSERVERS - NFAULTS, index_++);
   }
   Passed2();
 }

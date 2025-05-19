@@ -12,6 +12,7 @@ namespace janus {
 
 // 4 servers in test configuration
 #define NSERVERS 4
+#define NFAULTS ((NSERVERS - 1) / 3)
 // slow network connections have latency up to 26 milliseconds
 #define MAXSLOW 27
 // servers have 1/10 chance of being disconnected to the network
@@ -57,8 +58,11 @@ class PbftTestConfig {
   // guards disconnected_ between Disconnect()/Reconnect() and netctlLoop
   std::mutex disconnect_mtx_;
 
+  std::map<int, Request> requests_; 
+
   const EVP_MD *md_; 
   Authenticator privkey_auth_; 
+  std::map<siteid_t, Authenticator> pubkey_auth_;  
 
  public:
   PbftTestConfig(PbftFrame **replicas);
