@@ -13,7 +13,7 @@ class Authenticator {
   private: 
     EVP_MD_CTX *mdctx_; 
     std::shared_ptr<EVP_PKEY> key_; 
-    EVP_PKEY_CTX *key_ctx_; 
+    EVP_PKEY_CTX *keyctx_; 
     
   public: 
     Authenticator(const EVP_MD *md, const std::shared_ptr<EVP_PKEY> &key);

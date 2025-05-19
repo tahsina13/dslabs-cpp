@@ -8,35 +8,35 @@ Authenticator::Authenticator(const EVP_MD *md, const std::shared_ptr<EVP_PKEY> &
     : key_(key) {
   verify((mdctx_ = EVP_MD_CTX_new()) != NULL);
   verify(EVP_DigestInit_ex(mdctx_, md, NULL) == 1);
-  verify((key_ctx_ = EVP_PKEY_CTX_new(key_.get(), NULL)) != NULL);
+  verify((keyctx_ = EVP_PKEY_CTX_new(key.get(), NULL)) != NULL);
 }
 
 Authenticator::~Authenticator() {
   if (mdctx_ != NULL) {
     EVP_MD_CTX_free(mdctx_);
   }
-  if (key_ctx_ != NULL) {
-    EVP_PKEY_CTX_free(key_ctx_);
+  if (keyctx_ != NULL) {
+    EVP_PKEY_CTX_free(keyctx_);
   }
 }
 
 std::string Authenticator::SignHash(const std::string &hash) {
   size_t siglen; 
   unsigned char *raw_sig; 
-  if (EVP_PKEY_sign_init(key_ctx_) != 1) {
+  if (EVP_PKEY_sign_init(keyctx_) != 1) {
     Log_fatal("EVP_PKEY_sign_init failed");
   }
-  if (EVP_PKEY_CTX_set_rsa_padding(key_ctx_, RSA_PKCS1_PADDING) != 1) {
+  if (EVP_PKEY_CTX_set_rsa_padding(keyctx_, RSA_PKCS1_PADDING) != 1) {
     Log_fatal("EVP_PKEY_CTX_set_rsa_padding failed");
   }
-  if (EVP_PKEY_sign(key_ctx_, NULL, &siglen, 
+  if (EVP_PKEY_sign(keyctx_, NULL, &siglen, 
                     (const unsigned char *)hash.data(), hash.size()) != 1) {
     Log_fatal("EVP_PKEY_sign failed");
   }
   if ((raw_sig = (unsigned char *)OPENSSL_malloc(siglen)) == NULL) {
     Log_fatal("OPENSSL_malloc failed");
   }
-  if (EVP_PKEY_sign(key_ctx_, raw_sig, &siglen, 
+  if (EVP_PKEY_sign(keyctx_, raw_sig, &siglen, 
                     (const unsigned char *)hash.data(), hash.size()) != 1) {
     Log_fatal("EVP_PKEY_sign failed");
   }
@@ -46,13 +46,13 @@ std::string Authenticator::SignHash(const std::string &hash) {
 }
 
 bool Authenticator::VerifyHash(const std::string &hash, const std::string &signature) {
-  if (EVP_PKEY_verify_init(key_ctx_) != 1) {
+  if (EVP_PKEY_verify_init(keyctx_) != 1) {
     Log_fatal("EVP_PKEY_verify_init failed");
   }
-  if (EVP_PKEY_CTX_set_rsa_padding(key_ctx_, RSA_PKCS1_PADDING) != 1) {
+  if (EVP_PKEY_CTX_set_rsa_padding(keyctx_, RSA_PKCS1_PADDING) != 1) {
     Log_fatal("EVP_PKEY_CTX_set_rsa_padding failed");
   }
-  int ret = EVP_PKEY_verify(key_ctx_, 
+  int ret = EVP_PKEY_verify(keyctx_, 
                             (const unsigned char *)signature.data(), signature.size(),
                             (const unsigned char *)hash.data(), hash.size());
   return ret == 1;

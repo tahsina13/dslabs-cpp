@@ -759,17 +759,15 @@ void Config::LoadKeysYML(YAML::Node config) {
         verify(priv_fp != NULL && pub_fp != NULL); 
         Log_info("Loading RSA keys for site %s", site->name.c_str());
         EVP_PKEY *privkey = PEM_read_PrivateKey(priv_fp, NULL, NULL, NULL);
-        std::shared_ptr<EVP_PKEY> privkey_ptr(privkey, [](EVP_PKEY *p) {
+        site->privkey = std::shared_ptr<EVP_PKEY>(privkey, [](EVP_PKEY *p) {
           EVP_PKEY_free(p); 
         });
-        site->privkey = privkey_ptr; 
         EVP_PKEY *pubkey = PEM_read_PUBKEY(pub_fp, NULL, NULL, NULL);
-        std::shared_ptr<EVP_PKEY> pubkey_ptr(pubkey, [](EVP_PKEY *p) {
+        site_pubkey_map_[site->id] = std::shared_ptr<EVP_PKEY>(pubkey, [](EVP_PKEY *p) {
           EVP_PKEY_free(p); 
         });
         fclose(priv_fp); 
         fclose(pub_fp); 
-        site_pubkey_map_[site->id] = pubkey_ptr; 
       }
     }
   }

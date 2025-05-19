@@ -58,6 +58,11 @@ void PbftServer::Setup() {
                            std::forward_as_tuple(md_, pubkey)); 
     } 
   }
+#ifdef PBFT_TEST_CORO
+  pubkey_auth_.emplace(std::piecewise_construct,
+                       std::forward_as_tuple(static_cast<svrid_t>(-1)),
+                       std::forward_as_tuple(md_, static_cast<PbftFrame*>(frame_)->pubkey_)); 
+#endif
 }
 
 bool PbftServer::Start(const shared_ptr<Marshallable>& cmd, 
@@ -352,27 +357,27 @@ void PbftServer::OnPreprepare(const PreprepareMessage &mesg,
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   Authenticator &auth = pubkey_auth_.at(mesg.server_id); 
   if (in_view_change_ || !auth.VerifyPreprepare(mesg)) {
+    cb(); 
     return; 
   }
 
   if (logstore_.HasPreprepare(mesg.seqno) || requests_.count(mesg.seqno) != 0) {
+    cb(); 
     return; 
   }
 
+  Authenticator &req_auth = pubkey_auth_.at(req.client_id);
   bool is_from_primary = mesg.server_id == current_primary_;
   bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
   bool is_digest_valid = mesg.digest == privkey_auth_.GetDigest(cmd); 
-  if (!is_from_primary || !is_same_view || !is_seqno_valid || !is_digest_valid) {
-    return; 
-  }
-
-  if (auth.VerifyRequest(cmd, req)) {
+  bool is_req_valid = req_auth.VerifyRequest(cmd, req); 
+  if (is_from_primary && is_same_view && is_seqno_valid && is_digest_valid && is_req_valid) {
     requests_.emplace(std::piecewise_construct,
                       std::forward_as_tuple(mesg.seqno),
                       std::forward_as_tuple(cmd, req));
-    HandlePreprepare(mesg); 
-  }
+    HandlePreprepare(mesg);
+  } 
   cb(); 
 }
 
@@ -380,10 +385,12 @@ void PbftServer::OnPrepare(const PrepareMessage &mesg, const function<void()> &c
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   Authenticator &auth = pubkey_auth_.at(mesg.server_id);
   if (in_view_change_ || !auth.VerifyPrepare(mesg)) {
+    cb(); 
     return; 
   }
 
   if (!logstore_.HasPreprepare(mesg.seqno) || requests_.count(mesg.seqno) == 0) {
+    cb(); 
     return; 
   }
   const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.seqno);
@@ -407,10 +414,12 @@ void PbftServer::OnCommit(const CommitMessage &mesg, const function<void()> &cb)
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
   Authenticator &auth = pubkey_auth_.at(mesg.server_id);
   if (in_view_change_ || !auth.VerifyCommit(mesg)) {
+    cb(); 
     return; 
   }
 
   if (!logstore_.HasPreprepare(mesg.seqno) || requests_.count(mesg.seqno) == 0) {
+    cb(); 
     return; 
   }
   const PreprepareMessage &preprepare = logstore_.GetPreprepare(mesg.seqno);
@@ -423,7 +432,7 @@ void PbftServer::OnCommit(const CommitMessage &mesg, const function<void()> &cb)
                     preprepare.seqno == mesg.seqno && 
                     preprepare.digest == mesg.digest;
   bool is_req_prepared = svr_req.state == RequestState::REQ_PREPARED;
-  if (!in_view_change_ && is_same_view && is_seqno_valid && is_digest_valid && is_matches && is_req_prepared) {
+  if (is_same_view && is_seqno_valid && is_digest_valid && is_matches && is_req_prepared) {
     HandleCommit(mesg);
   }
   cb(); 

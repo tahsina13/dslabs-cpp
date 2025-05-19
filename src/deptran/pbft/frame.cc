@@ -1,3 +1,6 @@
+#include <openssl/bio.h>
+#include <openssl/pem.h>
+
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
@@ -48,6 +51,8 @@ std::shared_ptr<Coroutine> PbftFrame::pbft_test_coro_ = nullptr;
 uint16_t PbftFrame::n_replicas_ = 0;
 PbftFrame *PbftFrame::replicas_[4];
 uint16_t PbftFrame::n_commo_ = 0;
+std::shared_ptr<EVP_PKEY> PbftFrame::privkey_ = nullptr;  
+std::shared_ptr<EVP_PKEY> PbftFrame::pubkey_ = nullptr;
 bool PbftFrame::tests_done_ = false;
 #endif
 
@@ -84,6 +89,24 @@ Coordinator *PbftFrame::CreateCoordinator(cooid_t coo_id,
 }
 
 TxLogServer *PbftFrame::CreateScheduler() {
+#ifdef PBFT_TEST_CORO
+  pbft_test_mutex_.lock();
+  if (privkey_ == nullptr) {
+    EVP_PKEY *key = EVP_RSA_gen(2048);
+    BIO *mem = BIO_new(BIO_s_mem());
+    PEM_write_bio_PUBKEY(mem, key); 
+    EVP_PKEY *pubkey = PEM_read_bio_PUBKEY(mem, NULL, NULL, NULL);
+    BIO_free(mem); 
+    privkey_ = std::shared_ptr<EVP_PKEY>(key, [](EVP_PKEY *p) {
+      EVP_PKEY_free(p);
+    });
+    pubkey_ = std::shared_ptr<EVP_PKEY>(pubkey, [](EVP_PKEY *p) {
+      EVP_PKEY_free(p);
+    });
+  }
+  pbft_test_mutex_.unlock();
+#endif
+
   if(svr_ == nullptr)
   {
     svr_ = new PbftServer(this); 

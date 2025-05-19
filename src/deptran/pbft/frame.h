@@ -1,5 +1,7 @@
 #pragma once
 
+#include <openssl/evp.h>
+
 #include <deptran/communicator.h>
 #include <mutex>
 #include "../frame.h"
@@ -11,6 +13,7 @@ namespace janus {
 
 class PbftFrame : public Frame {
  private:
+  friend class PbftTestConfig; 
   slotid_t slot_hint_ = 1;
 #ifdef PBFT_TEST_CORO
   static std::mutex pbft_test_mutex_;
@@ -18,6 +21,7 @@ class PbftFrame : public Frame {
   static uint16_t n_replicas_;
   static PbftFrame *replicas_[4];
   static uint16_t n_commo_;
+  static std::shared_ptr<EVP_PKEY> privkey_; 
   static bool tests_done_;
 #endif
  public:
@@ -25,6 +29,9 @@ class PbftFrame : public Frame {
   PbftCommo *commo_ = nullptr;
   /* TODO: have another class for common data */
   PbftServer *svr_ = nullptr;
+#ifdef PBFT_TEST_CORO
+  static std::shared_ptr<EVP_PKEY> pubkey_;
+#endif
   Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,

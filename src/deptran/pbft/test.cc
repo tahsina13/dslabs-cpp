@@ -57,14 +57,14 @@ void PbftLabTest::Cleanup(void) {
 #define AssertWaitNoTimeout(ret, index, n) \
         Assert2(ret != -1, "waited too long for %d server(s) to commit index %ld", n, index); \
         Assert2(ret != -2, "term moved on before index %ld committed by %d server(s)", index, n)
-#define DoAgreeAndAssertIndex(cmd, client_id, n, index) { \
-        auto r = config_->DoAgreement(cmd, client_id, n, false); \
+#define DoAgreeAndAssertIndex(cmd, n, index) { \
+        auto r = config_->DoAgreement(cmd, n, false); \
         auto ind = index; \
         Assert2(r > 0, "failed to reach agreement for command %d among %d servers, expected commit index>0, got %" PRId64, cmd, n, r); \
         Assert2(r == ind, "agreement index incorrect. got %ld, expected %ld", r, ind); \
       }
-#define DoAgreeAndAssertWaitSuccess(cmd, client_id, n) { \
-        auto r = config_->DoAgreement(cmd, client_id, n, true); \
+#define DoAgreeAndAssertWaitSuccess(cmd, n) { \
+        auto r = config_->DoAgreement(cmd, n, true); \
         Assert2(r > 0, "failed to reach agreement for command %d among %d servers", cmd, n); \
         index_ = r + 1; \
       }
@@ -72,12 +72,11 @@ void PbftLabTest::Cleanup(void) {
 int PbftLabTest::testBasicAgree(void) {
   Init2(1, "Basic agreement");
   Coroutine::Sleep(ELECTIONTIMEOUT); 
-  cliid_t client_id = Config::GetConfig()->GetMyClients()[0].id; 
   for (int i = 1; i <= 3; i++) {
     // make sure no commits exist before any agreements are started
     AssertNoneCommitted(index_);
     // complete 1 agreement and make sure its index is as expected
-    DoAgreeAndAssertIndex((int)(index_ + 100), client_id, NSERVERS, index_++);
+    DoAgreeAndAssertIndex((int)(index_ + 100), NSERVERS, index_++);
   }
   Passed2();
 }

@@ -58,7 +58,7 @@ class PbftTestConfig {
   std::mutex disconnect_mtx_;
 
   const EVP_MD *md_; 
-  std::map<cliid_t, Authenticator> privkey_auth_; 
+  Authenticator privkey_auth_; 
 
  public:
   PbftTestConfig(PbftFrame **replicas);
@@ -82,7 +82,7 @@ class PbftTestConfig {
   int NCommitted(uint64_t index);
 
   // Calls Start() to specified server
-  bool Start(int svr, int cmd, cliid_t client_id, uint64_t *index, uint64_t *term);
+  bool Start(int svr, int cmd, uint64_t *index, uint64_t *term);
 
   // Waits for at least n servers to commit index
   // If commit takes too long, gives up after a while.
@@ -99,7 +99,7 @@ class PbftTestConfig {
   // Makes sure the value of the commits is the same as what was given.
   // If retry == true, Retries the agreement until at most 10 seconds pass.
   // Returns index of committed agreement on success, 0 on error.
-  uint64_t DoAgreement(int cmd, cliid_t client_id, int n, bool retry);
+  uint64_t DoAgreement(int cmd, int n, bool retry);
 
   // Disconnects server from rest of servers
   void Disconnect(int svr);

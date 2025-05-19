@@ -12,7 +12,8 @@ std::function<std::string(Marshallable &)> PbftTestConfig::commit_callbacks[NSER
 std::vector<int> PbftTestConfig::committed_cmds[NSERVERS];
 uint64_t PbftTestConfig::rpc_count_last[NSERVERS];
 
-PbftTestConfig::PbftTestConfig(PbftFrame **replicas) : md_(EVP_sha512()) {
+PbftTestConfig::PbftTestConfig(PbftFrame **replicas) : md_(EVP_sha512()),
+                                                       privkey_auth_(md_, PbftFrame::privkey_) {
   verify(PbftTestConfig::replicas == nullptr);
   PbftTestConfig::replicas = replicas;
   for (int i = 0; i < NSERVERS; i++) {
@@ -20,13 +21,6 @@ PbftTestConfig::PbftTestConfig(PbftFrame **replicas) : md_(EVP_sha512()) {
     PbftTestConfig::committed_cmds[i].push_back(-1);
     PbftTestConfig::rpc_count_last[i] = 0;
     disconnected_[i] = false;
-  }
-  for (const auto &p : Config::GetConfig()->GetMyClients()) {
-    if (p.privkey != nullptr) {
-      privkey_auth_.emplace(std::piecewise_construct,
-                            std::forward_as_tuple(p.id),
-                            std::forward_as_tuple(md_, p.privkey));
-    }
   }
   th_ = std::thread([this](){ netctlLoop(); });
 }
@@ -87,7 +81,7 @@ int PbftTestConfig::NCommitted(uint64_t index) {
   return n;
 }
 
-bool PbftTestConfig::Start(int svr, int cmd, cliid_t client_id, uint64_t *index, uint64_t *view) {
+bool PbftTestConfig::Start(int svr, int cmd, uint64_t *index, uint64_t *view) {
   // Construct an empty TpcCommitCommand containing cmd as its tx_id_
   auto cmdptr = std::make_shared<TpcCommitCommand>();
   auto vpd_p = std::make_shared<VecPieceData>();
@@ -101,9 +95,9 @@ bool PbftTestConfig::Start(int svr, int cmd, cliid_t client_id, uint64_t *index,
   Log_debug("Starting agreement on svr %d for cmd id %d", svr, cmdptr->tx_id_);
   Request req {
     .timestamp = timestamp,
-    .client_id = client_id,
+    .client_id = static_cast<cliid_t>(-1),
   };
-  privkey_auth_.at(client_id).SignRequest(cmdptr_m, req); 
+  privkey_auth_.SignRequest(cmdptr_m, req); 
   return PbftTestConfig::replicas[svr]->svr_->Start(cmdptr_m, req, index, view);
 }
 
@@ -136,7 +130,7 @@ int PbftTestConfig::Wait(uint64_t index, int n, uint64_t view) {
   verify(0);
 }
 
-uint64_t PbftTestConfig::DoAgreement(int cmd, cliid_t client_id, int n, bool retry) {
+uint64_t PbftTestConfig::DoAgreement(int cmd, int n, bool retry) {
   Log_debug("Doing 1 round of Pbft agreement");
   auto start = chrono::steady_clock::now();
   while ((chrono::steady_clock::now() - start) < chrono::seconds{10}) {
@@ -149,7 +143,7 @@ uint64_t PbftTestConfig::DoAgreement(int cmd, cliid_t client_id, int n, bool ret
       // skip disconnected servers
       if (PbftTestConfig::replicas[i]->svr_->IsDisconnected())
         continue;
-      if (Start(i, cmd, client_id, &index, &view)) {
+      if (Start(i, cmd, &index, &view)) {
         Log_debug("starting cmd ldr=%d cmd=%d index=%ld view=%ld", 
             PbftTestConfig::replicas[i]->svr_->loc_id_, cmd, index, view);
         ldr = i;
