@@ -21,6 +21,7 @@ class PbftLabTest {
  private:
 
   int testBasicAgree(void);
+  int testCheckpoint(void); 
 
   void wait(uint64_t microseconds);
 

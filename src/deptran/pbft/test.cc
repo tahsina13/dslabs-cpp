@@ -9,8 +9,12 @@ namespace janus {
 
 int PbftLabTest::Run(void) {
   config_->SetLearnerAction();
+  config_->SetChkptAction();
   uint64_t start_rpc = config_->RpcTotal();
-  if (testBasicAgree()) {
+  Coroutine::Sleep(ELECTIONTIMEOUT); 
+  if (testBasicAgree()
+      || TEST_EXPAND(testCheckpoint())
+    ) {
     Print("TESTS FAILED");
     return 1;
   }
@@ -51,6 +55,12 @@ void PbftLabTest::Cleanup(void) {
                 "%d servers committed index %ld (%d expected)", \
                 nc, index, expected) \
       }
+#define AssertNCheckpointed(index, expected) { \
+        auto nc = config_->NCheckpointed(index); \
+        Assert2(nc >= expected, \
+                "%d servers checkpointed index %ld (%d expected)", \
+                nc, index, expected) \
+      }
 #define AssertStartOk(ok) Assert2(ok, "unexpected leader change during Start()")
 #define AssertWaitNoError(ret, index) \
         Assert2(ret != -3, "committed values differ for index %ld", index)
@@ -71,13 +81,24 @@ void PbftLabTest::Cleanup(void) {
 
 int PbftLabTest::testBasicAgree(void) {
   Init2(1, "Basic agreement");
-  Coroutine::Sleep(ELECTIONTIMEOUT); 
   for (int i = 1; i <= 3; i++) {
     // make sure no commits exist before any agreements are started
     AssertNoneCommitted(index_);
     // complete 1 agreement and make sure its index is as expected
     DoAgreeAndAssertIndex((int)(index_ + 100), NSERVERS - NFAULTS, index_++);
   }
+  Passed2();
+}
+
+int PbftLabTest::testCheckpoint(void) {
+  Init2(2, "Checkpoint");
+  for (int i = 1; i <= CHKPT_INTERVAL; i++) {
+    // make sure no commits exist before any agreements are started
+    AssertNoneCommitted(index_);
+    // complete 1 agreement and make sure its index is as expected
+    DoAgreeAndAssertIndex((int)(index_ + 200), NSERVERS - NFAULTS, index_++);
+  }
+  AssertNCheckpointed(CHKPT_INTERVAL, NFAULTS + 1); 
   Passed2();
 }
 

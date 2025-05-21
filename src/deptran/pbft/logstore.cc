@@ -19,7 +19,6 @@ const PreprepareMessage &LogStore::GetPreprepare(slotid_t slot) const {
   return preprepares_.at(slot); 
 }
 
-
 bool LogStore::HasPrepare(slotid_t slot, svrid_t server_id) const {
   return prepares_.count(slot) > 0 && prepares_.at(slot).count(server_id) > 0; 
 } 

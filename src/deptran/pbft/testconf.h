@@ -13,6 +13,7 @@ namespace janus {
 // 4 servers in test configuration
 #define NSERVERS 4
 #define NFAULTS ((NSERVERS - 1) / 3)
+#define CHKPT_INTERVAL 100
 // slow network connections have latency up to 26 milliseconds
 #define MAXSLOW 27
 // servers have 1/10 chance of being disconnected to the network
@@ -50,7 +51,9 @@ class PbftTestConfig {
  private:
   static PbftFrame **replicas;
   static std::function<std::string(Marshallable &)> commit_callbacks[NSERVERS];
+  static std::function<std::string(slotid_t)> chkpt_callbacks[NSERVERS];
   static std::vector<int> committed_cmds[NSERVERS];
+  static std::string server_chkpts[NSERVERS]; 
   static uint64_t rpc_count_last[NSERVERS];
 
   // disconnected_[svr] true if svr is disconnected by Disconnect()/Reconnect()
@@ -72,6 +75,11 @@ class PbftTestConfig {
   // logged to this test's data structures.
   void SetLearnerAction(void);
 
+  // sets up checkpoint action functions for the servers
+  // so that each checkpoint on each server is
+  // logged to this test's data structures.
+  void SetChkptAction(void); 
+
   // Returns true if at least 1 server has a currentTerm
   // number higher than term.
   bool ViewMovedOn(uint64_t view);
@@ -84,6 +92,10 @@ class PbftTestConfig {
   // Returns number of servers that think log entry at index is committed.
   // Checks if the committed value for index is the same across servers.
   int NCommitted(uint64_t index);
+
+  // Returns number of servers that have checkpointed up to index
+  // Checks if the lower watermark is greater than or equal to index
+  int NCheckpointed(uint64_t index); 
 
   // Calls Start() to specified server
   bool Start(int svr, int cmd, uint64_t *index, uint64_t *term);

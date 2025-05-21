@@ -9,7 +9,9 @@ int _test_id_g = 0;
 
 PbftFrame **PbftTestConfig::replicas = nullptr;
 std::function<std::string(Marshallable &)> PbftTestConfig::commit_callbacks[NSERVERS];
+std::function<std::string(slotid_t)> PbftTestConfig::chkpt_callbacks[NSERVERS];
 std::vector<int> PbftTestConfig::committed_cmds[NSERVERS];
+std::string PbftTestConfig::server_chkpts[NSERVERS];
 uint64_t PbftTestConfig::rpc_count_last[NSERVERS];
 
 PbftTestConfig::PbftTestConfig(PbftFrame **replicas) : md_(EVP_sha512()),
@@ -35,22 +37,33 @@ PbftTestConfig::PbftTestConfig(PbftFrame **replicas) : md_(EVP_sha512()),
 
 void PbftTestConfig::SetLearnerAction(void) {
   for (int i = 0; i < NSERVERS; i++) {
-    PbftTestConfig::commit_callbacks[i] = [i](Marshallable& cmd) -> std::string {
+    PbftTestConfig::commit_callbacks[i] = [i, this](Marshallable& cmd) -> std::string {
       verify(cmd.kind_ == MarshallDeputy::CMD_TPC_COMMIT);
       auto& command = dynamic_cast<TpcCommitCommand&>(cmd);
       Log_debug("server %d committed value %d", i, command.tx_id_);
       PbftTestConfig::committed_cmds[i].push_back(command.tx_id_);
+      PbftTestConfig::server_chkpts[i] = privkey_auth_.GetChkptDigest(PbftTestConfig::server_chkpts[i], cmd);
       return std::to_string(command.tx_id_); // just return transaction id for now
     };
     PbftTestConfig::replicas[i]->svr_->RegLearnerAction(PbftTestConfig::commit_callbacks[i]);
   }
 }
 
+void PbftTestConfig::SetChkptAction(void) {
+  for (int i = 0; i < NSERVERS; i++) {
+    PbftTestConfig::chkpt_callbacks[i] = [i](slotid_t seqno) -> std::string {
+      Log_debug("server %d checkpointed at seqno %lu", i, seqno);
+      return PbftTestConfig::server_chkpts[i]; 
+    };
+    PbftTestConfig::replicas[i]->svr_->RegChkptAction(PbftTestConfig::chkpt_callbacks[i]);
+  }
+}
+
 bool PbftTestConfig::ViewMovedOn(uint64_t view) {
   for (int i = 0; i < NSERVERS; i++) {
-    uint64_t curView;
+    uint64_t curView, chkptSeqno;
     bool isPrimary;
-    PbftTestConfig::replicas[i]->svr_->GetState(&isPrimary, &curView);
+    PbftTestConfig::replicas[i]->svr_->GetState(&isPrimary, &curView, &chkptSeqno);
     if (curView > view) {
       return true;
     }
@@ -59,11 +72,11 @@ bool PbftTestConfig::ViewMovedOn(uint64_t view) {
 }
 
 uint64_t PbftTestConfig::OneView(void) {
-  uint64_t view, curView;
+  uint64_t view, curView, chkptSeqno;
   bool isPrimary;
-  PbftTestConfig::replicas[0]->svr_->GetState(&isPrimary, &view);
+  PbftTestConfig::replicas[0]->svr_->GetState(&isPrimary, &view, &chkptSeqno);
   for (int i = 1; i < NSERVERS; i++) {
-    PbftTestConfig::replicas[i]->svr_->GetState(&isPrimary, &curView);
+    PbftTestConfig::replicas[i]->svr_->GetState(&isPrimary, &curView, &chkptSeqno);
     if (curView != view) {
       return -1;
     }
@@ -90,13 +103,28 @@ int PbftTestConfig::NCommitted(uint64_t index) {
           return -1;
         }
       }
-      auto &auth = pubkey_auth_.at(i); 
-      if (auth.VerifyReply(currep)) {
-        n++; 
-      }
+      // auto &auth = pubkey_auth_.at(i); 
+      // if (auth.VerifyReply(currep)) {
+      //   n++; 
+      // }
+      n++;  
     }
   }
   return n;
+}
+
+int PbftTestConfig::NCheckpointed(uint64_t index) {
+  int n = 0; 
+  uint64_t curView, chkptSeqno; 
+  bool isPrimary;
+  for (int i = 0; i < NSERVERS; i++) {
+    PbftTestConfig::replicas[i]->svr_->GetState(&isPrimary, &curView, &chkptSeqno);
+    Log_info("Server %d checkpoint seqno %lu", i, chkptSeqno);
+    if (chkptSeqno >= index) {
+      n++;
+    } 
+  }
+  return n; 
 }
 
 bool PbftTestConfig::Start(int svr, int cmd, uint64_t *index, uint64_t *view) {

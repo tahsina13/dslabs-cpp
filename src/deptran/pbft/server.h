@@ -13,8 +13,8 @@
 
 namespace janus {
 
-#define CHECKPOINT_INTERVAL 100
-#define MAX_REQUESTS_IN_TRANSIT (2 * CHECKPOINT_INTERVAL)
+#define CHKPT_INTERVAL 100
+#define MAX_REQUESTS_IN_TRANSIT (2 * CHKPT_INTERVAL)
 
 enum RequestState {
   REQ_INIT,
@@ -39,20 +39,20 @@ class PbftServer : public TxLogServer {
   /* Your data here */
   uint64_t num_proxies_; 
   uint64_t target_majority_; 
-  uint64_t target_ckpt_majority_; 
+  uint64_t target_chkpt_majority_; 
 
   uint64_t current_view_; 
   svrid_t current_primary_; 
 
-  slotid_t low_watermark_; 
+  slotid_t low_watermark_;  // also latest stable checkpoint sequence number
   slotid_t high_watermark_; 
   slotid_t last_executed_;
+
+  bool in_view_change_; 
 
   std::map<slotid_t, ServerRequest> requests_; 
   std::map<std::pair<uint64_t, cliid_t>, Reply> replies_;
   LogStore logstore_; 
-
-  bool in_view_change_; 
   
   const EVP_MD *md_; 
   Authenticator privkey_auth_; 
@@ -62,7 +62,7 @@ class PbftServer : public TxLogServer {
   PreprepareMessage CreatePreprepare(uint64_t view, slotid_t seqno, const std::string &digest); 
   PrepareMessage CreatePrepare(uint64_t view, slotid_t seqno, const std::string &digest);
   CommitMessage CreateCommit(uint64_t view, slotid_t seqno, const std::string &digest);
-  CheckpointMessage CreateCheckpoint(slotid_t ckpt_seqno, const std::string &ckpt_digest);
+  CheckpointMessage CreateCheckpoint(slotid_t chkpt_seqno, const std::string &chkpt_digest);
   ViewChangeMessage CreateViewChange(uint64_t new_view); 
   NewViewMessage CreateNewView(uint64_t new_view, const std::map<svrid_t, ViewChangeMessage> &view_changes);
   
@@ -92,7 +92,7 @@ class PbftServer : public TxLogServer {
   bool Start(const shared_ptr<Marshallable> &cmd, 
              const Request &req,
              uint64_t *index, uint64_t *view); 
-  void GetState(bool *is_primary, uint64_t *view); 
+  void GetState(bool *is_primary, uint64_t *view, uint64_t *chkpt_seqno); 
   bool GetReply(uint64_t timestamp, cliid_t client_id, Reply *rep);
 
  private:

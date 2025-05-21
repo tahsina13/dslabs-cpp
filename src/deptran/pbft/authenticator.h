@@ -33,8 +33,8 @@ class Authenticator {
     std::string GetReplyHash(const Reply &rep); 
 
   public: 
-    std::string GetDigest(const std::shared_ptr<Marshallable> &cmd);
-    // TODO: implement checkpoint digests
+    std::string GetDigest(Marshallable &cmd);
+    std::string GetChkptDigest(const std::string &chkpt_digest, Marshallable &cmd); 
     
     void SignRequest(const std::shared_ptr<Marshallable> &cmd, Request &req);
     void SignPreprepare(PreprepareMessage &mesg); 

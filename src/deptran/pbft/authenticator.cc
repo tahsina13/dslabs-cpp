@@ -58,8 +58,8 @@ bool Authenticator::VerifyHash(const std::string &hash, const std::string &signa
   return ret == 1;
 }
 
-std::string Authenticator::GetDigest(const std::shared_ptr<Marshallable> &cmd) {
-  std::string cmd_str = cmd->ToString(); 
+std::string Authenticator::GetDigest(Marshallable &cmd) {
+  std::string cmd_str = cmd.ToString(); 
   unsigned int hash_len = EVP_MD_size(EVP_MD_CTX_get0_md(mdctx_));
   unsigned char *raw_digest; 
   if (EVP_DigestInit_ex(mdctx_, NULL, NULL) != 1) {
@@ -77,6 +77,16 @@ std::string Authenticator::GetDigest(const std::shared_ptr<Marshallable> &cmd) {
   std::string digest (raw_digest, raw_digest + hash_len); 
   OPENSSL_free(raw_digest);
   return digest; 
+}
+
+std::string Authenticator::GetChkptDigest(const std::string &chkpt_digest, Marshallable &cmd) {
+  std::string cmd_digest = GetDigest(cmd); 
+  std::vector<unsigned char> bytes (cmd_digest.begin(), cmd_digest.end()); 
+  for (int i = 0; i < chkpt_digest.size(); i++) {
+    bytes[i] ^= chkpt_digest[i]; 
+  }
+  std::string new_chkpt_digest (bytes.begin(), bytes.end()); 
+  return new_chkpt_digest; 
 }
 
 std::string Authenticator::GetRequestHash(const std::shared_ptr<Marshallable> &cmd, const Request &req) {
@@ -177,8 +187,8 @@ std::string Authenticator::GetCheckpointHash(const CheckpointMessage &mesg) {
     Log_fatal("EVP_DigestInit_ex failed");
   }
   if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.ckpt_seqno, sizeof(mesg.ckpt_seqno)) != 1 ||
-      EVP_DigestUpdate(mdctx_, mesg.ckpt_digest.data(), mesg.ckpt_digest.size()) != 1) {
+      EVP_DigestUpdate(mdctx_, &mesg.chkpt_seqno, sizeof(mesg.chkpt_seqno)) != 1 ||
+      EVP_DigestUpdate(mdctx_, mesg.chkpt_digest.data(), mesg.chkpt_digest.size()) != 1) {
     Log_fatal("EVP_DigestUpdate failed");
   }
   if ((raw_hash = (unsigned char *)OPENSSL_malloc(hash_len)) == NULL) {
@@ -200,12 +210,12 @@ std::string Authenticator::GetViewChangeHash(const ViewChangeMessage &mesg) {
   } 
   if (EVP_DigestUpdate(mdctx_, &mesg.server_id, sizeof(mesg.server_id)) != 1 ||
       EVP_DigestUpdate(mdctx_, &mesg.new_view, sizeof(mesg.new_view)) != 1 ||
-      EVP_DigestUpdate(mdctx_, &mesg.ckpt_seqno, sizeof(mesg.ckpt_seqno)) != 1) {
+      EVP_DigestUpdate(mdctx_, &mesg.chkpt_seqno, sizeof(mesg.chkpt_seqno)) != 1) {
     Log_fatal("EVP_DigestUpdate failed");
   }
-  for (const auto &ckpt_entry : mesg.checkpoints) {
-    const CheckpointMessage &ckpt = ckpt_entry.second; 
-    if (EVP_DigestUpdate(mdctx_, ckpt.ckpt_digest.data(), ckpt.ckpt_digest.size()) != 1) {
+  for (const auto &chkpt_entry : mesg.checkpoints) {
+    const CheckpointMessage &chkpt = chkpt_entry.second; 
+    if (EVP_DigestUpdate(mdctx_, chkpt.chkpt_digest.data(), chkpt.chkpt_digest.size()) != 1) {
       Log_fatal("EVP_DigestUpdate failed");
     } 
   }
@@ -349,9 +359,9 @@ bool Authenticator::VerifyCheckpoint(const CheckpointMessage &mesg) {
 }
 
 bool Authenticator::VerifyViewChange(const ViewChangeMessage &mesg) {
-  for (const auto &ckpt_entry : mesg.checkpoints) {
-    const CheckpointMessage &ckpt = ckpt_entry.second;
-    if (!VerifyCheckpoint(ckpt)) {
+  for (const auto &chkpt_entry : mesg.checkpoints) {
+    const CheckpointMessage &chkpt = chkpt_entry.second;
+    if (!VerifyCheckpoint(chkpt)) {
       return false; 
     }
   }

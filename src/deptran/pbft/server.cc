@@ -39,7 +39,7 @@ void PbftServer::Setup() {
   num_proxies_ = commo()->rpc_par_proxies_[partition_id_].size();
   uint64_t faults = (num_proxies_ - 1) / 3; 
   target_majority_ = 2 * faults + 1; 
-  target_ckpt_majority_ = faults + 1; // for pBFT-PK model
+  target_chkpt_majority_ = faults + 1; // for pBFT-PK model
 
   Config *config = Config::GetConfig(); 
   for (const auto &p : commo()->rpc_par_proxies_[partition_id_]) {
@@ -85,7 +85,7 @@ bool PbftServer::Start(const shared_ptr<Marshallable>& cmd,
                     std::forward_as_tuple(seqno),
                     std::forward_as_tuple(cmd, req));
 
-  std::string digest = privkey_auth_.GetDigest(cmd); 
+  std::string digest = privkey_auth_.GetDigest(*cmd); 
   PreprepareMessage preprepare = CreatePreprepare(current_view_, seqno, digest); 
   privkey_auth_.SignPreprepare(preprepare); 
   if (!logstore_.AddPreprepare(seqno, preprepare)) {
@@ -102,10 +102,11 @@ bool PbftServer::Start(const shared_ptr<Marshallable>& cmd,
   return true;  
 }
 
-void PbftServer::GetState(bool *is_primary, uint64_t *view) {
+void PbftServer::GetState(bool *is_primary, uint64_t *view, uint64_t *chkpt_seqno) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   *is_primary = current_primary_ == loc_id_; 
   *view = current_view_; 
+  *chkpt_seqno = low_watermark_; 
 }
 
 bool PbftServer::GetReply(uint64_t timestamp, cliid_t client_id, Reply *rep) {
@@ -145,11 +146,11 @@ CommitMessage PbftServer::CreateCommit(uint64_t view, slotid_t seqno, const std:
   }; 
 }
 
-CheckpointMessage PbftServer::CreateCheckpoint(slotid_t ckpt_seqno, const std::string &ckpt_digest) {
+CheckpointMessage PbftServer::CreateCheckpoint(slotid_t chkpt_seqno, const std::string &chkpt_digest) {
   return {
     .server_id = site_id_,
-    .ckpt_seqno = ckpt_seqno,
-    .ckpt_digest = ckpt_digest,
+    .chkpt_seqno = chkpt_seqno,
+    .chkpt_digest = chkpt_digest,
   };
 }
 
@@ -172,7 +173,7 @@ ViewChangeMessage PbftServer::CreateViewChange(uint64_t new_view) {
   return {
     .server_id = site_id_,
     .new_view = new_view,
-    .ckpt_seqno = low_watermark_,
+    .chkpt_seqno = low_watermark_,
     .checkpoints = checkpoints,
     .preprepares = preprepares,
     .prepares = prepares,
@@ -185,10 +186,10 @@ NewViewMessage PbftServer::CreateNewView(uint64_t new_view, const std::map<svrid
   std::map<slotid_t, PreprepareMessage> preprepares; 
   for (const auto &view_change_entry : view_changes) {
     const ViewChangeMessage &view_change = view_change_entry.second; 
-    bool is_ckpt_stable = (view_change.ckpt_seqno == 0) || // ckpt 0 stable by default 
-      (view_change.checkpoints.size() >= target_ckpt_majority_);
-    if (is_ckpt_stable) {
-      min_s = std::min(min_s, view_change.ckpt_seqno);
+    bool is_chkpt_stable = (view_change.chkpt_seqno == 0) || // chkpt 0 stable by default 
+      (view_change.checkpoints.size() >= target_chkpt_majority_);
+    if (is_chkpt_stable) {
+      min_s = std::min(min_s, view_change.chkpt_seqno);
     }
     for (const auto &preprepare_entry : view_change.preprepares) {
       const slotid_t slot = preprepare_entry.first;
@@ -274,11 +275,20 @@ void PbftServer::HandleCommit(const CommitMessage &mesg) {
                           std::forward_as_tuple(rep));
         svr_req.state = RequestState::REQ_EXECUTED; 
         last_executed_++; 
-        break;
       } else if (svr_req.state == RequestState::REQ_EXECUTED) {
         last_executed_++; 
       } else {
         break; 
+      }
+      if (last_executed_ % CHKPT_INTERVAL == 0) {
+        CheckpointMessage chkpt = CreateCheckpoint(last_executed_, make_chkpt_(last_executed_));  
+        privkey_auth_.SignCheckpoint(chkpt);  
+        for (const auto &p : commo()->rpc_par_proxies_[partition_id_]) {
+          if (p.first != site_id_) {
+            commo()->SendCheckpoint(partition_id_, p.first, chkpt); 
+          }
+        }
+        HandleCheckpoint(chkpt); 
       }
     }
   }
@@ -286,10 +296,16 @@ void PbftServer::HandleCommit(const CommitMessage &mesg) {
 
 void PbftServer::HandleCheckpoint(const CheckpointMessage &mesg) {
   std::lock_guard<std::recursive_mutex> lock(mtx_); 
-  logstore_.AddCheckpoint(mesg.ckpt_seqno, mesg.server_id, mesg); 
-  bool has_majority = logstore_.GetCheckpointCount(mesg.ckpt_seqno) >= target_ckpt_majority_; 
-  if (has_majority && mesg.ckpt_seqno > low_watermark_) {
-    low_watermark_ = mesg.ckpt_seqno; 
+  if (logstore_.GetCheckpointCount(mesg.chkpt_seqno) > 0) {
+    auto chkpt_digest = logstore_.GetCheckpoints(mesg.chkpt_seqno).begin()->second.chkpt_digest;
+    if (chkpt_digest != mesg.chkpt_digest) {
+      return; 
+    }
+  }
+  logstore_.AddCheckpoint(mesg.chkpt_seqno, mesg.server_id, mesg); 
+  bool has_majority = logstore_.GetCheckpointCount(mesg.chkpt_seqno) >= target_chkpt_majority_; 
+  if (has_majority && mesg.chkpt_seqno > low_watermark_) {
+    low_watermark_ = mesg.chkpt_seqno; 
     high_watermark_ = low_watermark_ + MAX_REQUESTS_IN_TRANSIT;
     logstore_.ClearLog(current_view_, low_watermark_); 
     requests_.erase(requests_.begin(), requests_.upper_bound(low_watermark_)); 
@@ -302,8 +318,8 @@ void PbftServer::HandleViewChange(const ViewChangeMessage &mesg) {
   logstore_.AddViewChange(mesg.new_view, mesg.server_id, mesg); 
   bool has_majority = logstore_.GetViewChangeCount(mesg.new_view) >= target_majority_ - 1; 
   if ((current_primary_ == loc_id_) && has_majority) {
-    if (!logstore_.HasViewChange(mesg.new_view, loc_id_)) {
-      logstore_.AddViewChange(mesg.new_view, loc_id_, CreateViewChange(mesg.new_view)); 
+    if (logstore_.HasViewChange(mesg.new_view, site_id_) == 0) {
+      logstore_.AddViewChange(mesg.new_view, site_id_, CreateViewChange(mesg.new_view)); 
     }
     NewViewMessage new_view = CreateNewView(mesg.new_view, logstore_.GetViewChanges(mesg.new_view)); 
     for (const auto &p : commo()->rpc_par_proxies_[partition_id_]) {
@@ -369,7 +385,7 @@ void PbftServer::OnPreprepare(const PreprepareMessage &mesg,
   bool is_from_primary = mesg.server_id == current_primary_;
   bool is_same_view = mesg.view == current_view_; 
   bool is_seqno_valid = low_watermark_ < mesg.seqno && mesg.seqno <= high_watermark_; 
-  bool is_digest_valid = mesg.digest == privkey_auth_.GetDigest(cmd); 
+  bool is_digest_valid = mesg.digest == privkey_auth_.GetDigest(*cmd); 
   bool is_req_valid = req_auth.VerifyRequest(cmd, req); 
   if (is_from_primary && is_same_view && is_seqno_valid && is_digest_valid && is_req_valid) {
     requests_.emplace(std::piecewise_construct,

@@ -41,15 +41,15 @@ struct CommitMessage {
 
 struct CheckpointMessage {
   svrid_t server_id;
-  slotid_t ckpt_seqno;   
-  string ckpt_digest; 
+  slotid_t chkpt_seqno;   
+  string chkpt_digest; 
   string signature; 
 }; 
 
 struct ViewChangeMessage {
   svrid_t server_id; 
   uint64_t new_view; 
-  slotid_t ckpt_seqno; 
+  slotid_t chkpt_seqno; 
   map<svrid_t, CheckpointMessage> checkpoints; 
   map<slotid_t, PreprepareMessage> preprepares; 
   map<slotid_t, map<svrid_t, PrepareMessage>> prepares; 
