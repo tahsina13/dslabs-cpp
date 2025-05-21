@@ -45,6 +45,18 @@ sudo pip3 install -r requirements.txt
 
 For next steps, checkout the guidelines in the [course web page](http://mpaxos.com/teaching/ds/22fa/labs.html).
 
+# Pbft Lab
+
+To build the pBFT lab run the following command:
+```
+python3 waf configure build --protocol=pbft --enable-pbft-test
+```
+
+To run the pBFT lab run the following command:
+```
+./build/deptrain -f config/pbft_lab_test.yml
+```
+
 ## Author and acknowledgements
 Author: Shuai Mu, Julie Lee (lab 1)
 
